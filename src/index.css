@@ -1,0 +1,343 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #070a12;
+  color: #e5e7eb;
+  font-family: "Noto Sans KR", "Noto Sans JP", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  overscroll-behavior: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* 모션 감소 선호 시 모든 장식 애니메이션 최소화 */
+@media (prefers-reduced-motion: reduce) {
+  .animate-float,
+  .animate-ring,
+  .animate-bar-glow,
+  .animate-camera-shake-hard,
+  .kim-nervous,
+  .flash-storm,
+  .animate-wobble,
+  .animate-ticker,
+  .animate-title-sway {
+    animation: none !important;
+  }
+  .animate-popup,
+  .animate-flash,
+  .animate-reaction,
+  .animate-shake,
+  .animate-count {
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* 초소형 화면(360px) 레인 가독성 확보 */
+@media (max-width: 380px) {
+  .font-display {
+    letter-spacing: 0.01em;
+  }
+}
+
+.font-display {
+  font-family: "Bebas Neue", "Noto Sans KR", sans-serif;
+  letter-spacing: 0.03em;
+}
+
+@keyframes popup-pop {
+  0% {
+    transform: translate(-50%, -50%) scale(0.4);
+    opacity: 0;
+  }
+  20% {
+    transform: translate(-50%, -50%) scale(1.15);
+    opacity: 1;
+  }
+  45% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  80% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(0.9);
+    opacity: 0;
+  }
+}
+.animate-popup {
+  animation: popup-pop 0.7s ease-out forwards;
+}
+
+@keyframes flash-fade {
+  0% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.animate-flash {
+  animation: flash-fade 0.28s ease-out forwards;
+}
+
+@keyframes reaction-in {
+  0% {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+  12% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  85% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+}
+.animate-reaction {
+  animation: reaction-in 1.7s ease-in-out forwards;
+}
+
+@keyframes shake-x {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-5px);
+  }
+  40% {
+    transform: translateX(5px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(4px);
+  }
+}
+.animate-shake {
+  animation: shake-x 0.35s ease-in-out;
+}
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(28px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.animate-slide-in {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+@keyframes float-slow {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+.animate-float {
+  animation: float-slow 3.2s ease-in-out infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(251, 191, 36, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0);
+  }
+}
+.animate-ring {
+  animation: pulse-ring 0.8s ease-out infinite;
+}
+
+@keyframes count-pop {
+  0% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+  30% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  80% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+}
+.animate-count {
+  animation: count-pop 0.85s ease-out forwards;
+}
+
+@keyframes bar-glow {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.animate-bar-glow {
+  animation: bar-glow 1.4s ease-in-out infinite;
+}
+
+.manager-kim {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55));
+  transition: transform 0.06s ease-out;
+}
+
+@keyframes kim-panic-shiver {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(-1.5px, 1px); }
+  50% { transform: translate(1.5px, -1px); }
+  75% { transform: translate(-1px, -1px); }
+  100% { transform: translate(0, 0); }
+}
+
+.kim-nervous {
+  animation: kim-panic-shiver 0.1s infinite;
+}
+
+@keyframes camera-shake-hard {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  20% { transform: translate(-3px, 3px) rotate(-1deg); }
+  40% { transform: translate(3px, -2px) rotate(1deg); }
+  60% { transform: translate(-3px, -3px) rotate(-0.5deg); }
+  80% { transform: translate(2px, 3px) rotate(0.5deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
+}
+
+.animate-camera-shake-hard {
+  animation: camera-shake-hard 0.1s infinite;
+}
+
+@keyframes hit-spark-anim {
+  0% {
+    transform: translate(-50%, -50%) scale(0.5);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--tx), var(--ty)) scale(1.5);
+    opacity: 0;
+  }
+}
+
+.hit-spark {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: hit-spark-anim 0.4s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes flash-storm-anim {
+  0% { opacity: 0.8; background: #fff; }
+  10% { opacity: 0; }
+  50% { opacity: 0.5; background: #fff; }
+  60% { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+.flash-storm {
+  animation: flash-storm-anim 0.3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes shockwave {
+  0% {
+    transform: translate(-50%, -50%) scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(4.2);
+    opacity: 0;
+  }
+}
+
+/* ── 코믹 타이틀 연출 ── */
+
+/* 만화 하프톤 도트 */
+.comic-halftone {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.16) 1.2px, transparent 1.6px);
+  background-size: 14px 14px;
+}
+
+/* 집중선 (스피드선) */
+.comic-speedlines {
+  background: repeating-conic-gradient(
+    from 0deg at 50% 42%,
+    rgba(251, 191, 36, 0.06) 0deg 2deg,
+    transparent 2deg 7deg
+  );
+}
+
+/* 만화 폭발 말풍선 (12각 스타버스트) */
+.comic-burst {
+  clip-path: polygon(
+    50% 0%, 61% 12%, 76% 6%, 79% 21%, 94% 21%, 91% 36%,
+    104% 44%, 94% 53%, 99% 68%, 85% 70%, 84% 85%, 70% 83%,
+    62% 96%, 52% 85%, 39% 93%, 34% 79%, 19% 81%, 20% 66%,
+    6% 62%, 12% 49%, 0% 40%, 11% 32%, 9% 17%, 23% 18%
+  );
+}
+
+@keyframes wobble {
+  0%, 100% { transform: rotate(-6deg) scale(1); }
+  50% { transform: rotate(5deg) scale(1.08); }
+}
+.animate-wobble {
+  animation: wobble 2.6s ease-in-out infinite;
+}
+
+@keyframes ticker-x {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.animate-ticker {
+  animation: ticker-x 22s linear infinite;
+}
+
+@keyframes title-sway {
+  0%, 100% { transform: rotate(-1.6deg); }
+  50% { transform: rotate(1.2deg); }
+}
+.animate-title-sway {
+  animation: title-sway 5s ease-in-out infinite;
+}
