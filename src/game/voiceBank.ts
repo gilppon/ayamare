@@ -20,6 +20,7 @@ function voiceUrl(file: string): string {
 }
 
 let bankPromise: Promise<Map<string, AudioBuffer>> | null = null;
+const syncCache = new Map<string, AudioBuffer>();
 
 /** 앱 시작 시 한 번 호출해 미리 디코드. 실패해도 throw하지 않음. */
 export function loadVoiceBank(): Promise<Map<string, AudioBuffer>> {
@@ -41,6 +42,8 @@ export function loadVoiceBank(): Promise<Map<string, AudioBuffer>> {
                 const buf = await res.arrayBuffer();
                 const audio = await ctx.decodeAudioData(buf);
                 bank.set(file, audio);
+                // 단일 캐시: 비동기 뱅크와 동기 조회가 같은 Map을 공유
+                if (!syncCache.has(file)) syncCache.set(file, audio);
               } catch {
                 /* 개별 실패 무시 */
               }
@@ -60,12 +63,8 @@ export function loadVoiceBank(): Promise<Map<string, AudioBuffer>> {
 
 /** 동기 조회. 미로드/실패 시 null (TTS 폴백용). */
 export function getVoiceBuffer(file: string): AudioBuffer | null {
-  // bankPromise 결과는 비동기라 여기서 직접 접근 불가.
-  // 대신 아래 동기 캐시를 사용한다.
   return syncCache.get(file) ?? null;
 }
-
-const syncCache = new Map<string, AudioBuffer>();
 
 export async function ensureVoiceBank(): Promise<void> {
   try {

@@ -100,11 +100,15 @@ const ko = {
   "game.speedup": "가속!",
 
   "hud.stockSub": "주가",
+  "hud.stock": "주가",
+  "hud.anger": "국민 분노",
   "hud.angerSub": "국민 분노도",
   "hud.tag": "#사죄회견",
   "hud.waiting": "반응을 기다리는 중…",
 
   "res.retry": "다시 도전",
+  "res.share": "기록 공유",
+  "res.shared": "복사됨!",
   "res.home": "타이틀로",
   "res.missionDone": "🎉 미션 달성!",
 
@@ -213,11 +217,15 @@ const en: Record<UIKey, string> = {
   "game.speedup": "Rush!",
 
   "hud.stockSub": "Stock",
+  "hud.stock": "Stock Price",
+  "hud.anger": "Public Anger",
   "hud.angerSub": "Outrage",
   "hud.tag": "#ApologyPresser",
   "hud.waiting": "Waiting for reactions…",
 
   "res.retry": "Retry",
+  "res.share": "Share",
+  "res.shared": "Copied!",
   "res.home": "Title",
   "res.missionDone": "🎉 Missions cleared!",
 
@@ -324,11 +332,15 @@ const ja: Record<UIKey, string> = {
   "game.speedup": "加速！",
 
   "hud.stockSub": "株価",
+  "hud.stock": "株価",
+  "hud.anger": "国民の怒り",
   "hud.angerSub": "国民の怒り",
   "hud.tag": "#謝罪会見",
   "hud.waiting": "反応待ち…",
 
   "res.retry": "再挑戦",
+  "res.share": "共有",
+  "res.shared": "コピー済!",
   "res.home": "タイトルへ",
   "res.missionDone": "🎉 任務達成！",
 

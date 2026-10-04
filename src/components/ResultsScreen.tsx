@@ -1,3 +1,4 @@
+import { useCallback, useState } from "react";
 import { GRADE_COLORS, JUDGMENTS } from "@/game/constants";
 import { MISSIONS, missionText } from "@/game/missions";
 import type { GameResult, Judgment } from "@/game/types";
@@ -26,6 +27,24 @@ export default function ResultsScreen({
   const claimed = useProgressStore((s) => s.claimed);
   const addPoints = useMetaStore((s) => s.addPoints);
   const lang = useSettingsStore((s) => s.lang);
+  const [shared, setShared] = useState(false);
+
+  const shareText =
+    `[ApologyPresser] ${grade} · ${result.score.toLocaleString("en-US")}pts · ` +
+    `ACC ${(result.accuracy * 100).toFixed(1)}% · COMBO ${result.maxCombo} · ` +
+    `PERFECT ${result.counts.PERFECT}#사죄회견 #ApologyPresser`;
+
+  const share = useCallback(() => {
+    const nav = navigator as Navigator & { share?: (d: { title: string; text: string }) => Promise<void> };
+    if (typeof nav.share === "function") {
+      nav.share({ title: "ApologyPresser", text: shareText }).catch(() => { /* dismissed */ });
+      return;
+    }
+    navigator.clipboard?.writeText(shareText).then(() => {
+      setShared(true);
+      window.setTimeout(() => setShared(false), 1800);
+    }).catch(() => { /* noop */ });
+  }, [shareText]);
 
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden px-6">
@@ -95,6 +114,12 @@ export default function ResultsScreen({
             className="rounded-full border border-amber-300/40 bg-amber-400/10 px-8 py-3 font-display text-xl text-amber-200 transition hover:bg-amber-400/20"
           >
             {tr(lang, "res.retry")}
+          </button>
+          <button
+            onClick={share}
+            className="rounded-full border border-cyan-300/40 bg-cyan-400/10 px-8 py-3 font-display text-xl text-cyan-200 transition hover:bg-cyan-400/20"
+          >
+            {shared ? tr(lang, "res.shared") : tr(lang, "res.share")}
           </button>
           <button
             onClick={onHome}

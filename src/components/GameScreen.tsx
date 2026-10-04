@@ -180,6 +180,13 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
   });
   const qIndexRef = useRef(0);
   const finishedRef = useRef(false);
+  // A-01: chart 재생성(lang 변경) 시 판정 ref 리셋 — 소프트락 방지
+  useEffect(() => {
+    noteStateRef.current = new Map(chart.notes.map((n) => [n.id, "pending"]));
+    qIndexRef.current = 0;
+    countsRef.current = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
+    setQuestion(chart.questions[0]);
+  }, [chart]);
   const lastTapRef = useRef<{ action: ApologyAction; time: number } | null>(null);
   const poseAngleRef = useRef(0);
   const dogezaRef = useRef(false);
@@ -258,7 +265,7 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
     text: string;
     tone: "bad" | "good";
   } | null>(null);
-  const [question, setQuestion] = useState<QuestionEvent>(chart.questions[0]);
+  const [question, setQuestion] = useState<QuestionEvent | undefined>(chart.questions[0]);
   const [laneSize, setLaneSize] = useState({ w: 0, h: 0 });
   const laneRef = useRef<HTMLDivElement>(null);
 
@@ -722,7 +729,7 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
   const beatDur = 60 / chart.bpm;
   const beatPhase = now > 0 ? (now % beatDur) / beatDur : 0;
   const hitPulse = 0.35 + (1 - beatPhase) * 0.5;
-  const firstNoteTime = chart.notes[0].time;
+  const firstNoteTime = chart.notes[0]?.time ?? Infinity;
   const remaining = firstNoteTime - now;
   let countCode: string | null = null;
   if (phase === "playing") {
@@ -858,7 +865,7 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
 
       {/* journalist / question */}
       <div className="absolute left-1/2 top-[13vh] z-20 w-full max-w-2xl -translate-x-1/2 px-4">
-        <Journalist type={question.journalist} text={question.text} />
+        {question && <Journalist type={question.journalist} text={question.text} />}
       </div>
 
       {/* character */}

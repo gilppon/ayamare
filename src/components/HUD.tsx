@@ -12,12 +12,12 @@ interface StockPanelProps {
 export const StockPanel = memo(function StockPanel({ stock, delta, history }: StockPanelProps) {
   const lang = useSettingsStore((s) => s.lang);
   const up = delta >= 0;
+  const min = history.length ? Math.min(...history) : 0;
+  const max = history.length ? Math.max(...history) : 1;
+  const range = Math.max(1, max - min);
   const points = history.length
     ? history
         .map((v, i) => {
-          const min = Math.min(...history);
-          const max = Math.max(...history);
-          const range = Math.max(1, max - min);
           const x = (i / Math.max(1, history.length - 1)) * 120;
           const y = 30 - ((v - min) / range) * 26 - 2;
           return `${x},${y}`;
@@ -29,7 +29,7 @@ export const StockPanel = memo(function StockPanel({ stock, delta, history }: St
     <div className="w-44 rounded-2xl border border-white/10 bg-slate-900/80 p-3 backdrop-blur">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-          Stock Price
+          {tr(lang, "hud.stock")}
         </span>
         <span className="text-[11px] text-slate-500">{tr(lang, "hud.stockSub")}</span>
       </div>
@@ -78,7 +78,7 @@ export const AngerMeter = memo(function AngerMeter({ anger }: AngerMeterProps) {
     <div className="w-44 rounded-2xl border border-white/10 bg-slate-900/80 p-3 backdrop-blur">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-          Public Anger
+          {tr(lang, "hud.anger")}
         </span>
         <span className="text-sm">
           {"🔥".repeat(clamped >= 80 ? 5 : clamped >= 60 ? 4 : clamped >= 40 ? 3 : clamped >= 20 ? 2 : 1)}
