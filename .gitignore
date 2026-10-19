@@ -8,12 +8,14 @@ blob-report/
 playwright/.cache/
 # vitest 캐시 (테스트 리포트 JSON)
 .vitest/
-# 성능 프로브 산출물 — 측정값이므로 커밋하지 않는다 (state.md 35.4 참고)
-notefield-perf.txt
-perf-baseline.json
+# 성능 프로브 산출물 — 측정값이므로 커밋하지 않는다 (state.md 35.4 참고).
+# `PERF_OUT=<이름>` 으로 경로가 정해지므로 확장자 규칙으로 잡는다.
+# (이전의 notefield-perf.txt / perf-baseline.json 은 어떤 코드 경로와도 연결되지
+#  없는 과거 산출물이라 함께 제거했다)
+perf*.json
+notefield*.txt
 # 밸런스 실측 산출물 — 실행마다 갱신되는 측정값 (판단 근거는 state.md 에 남긴다)
 balance-report.txt
-probe-report.txt
 *.local
 .DS_Store
 .vscode/*
