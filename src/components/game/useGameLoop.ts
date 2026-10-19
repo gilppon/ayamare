@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { LANES } from "@/game/constants";
 import type { TimingWindows } from "@/game/judgment";
+import { isJudgeable } from "@/game/visibility";
 import { intensifyQuestion, type PressContext } from "@/game/journalistAI";
 import type { Lang } from "@/i18n/ui";
 import type {
@@ -201,7 +202,9 @@ export function useGameLoop(refs: GameLoopRefs, sinks: GameLoopSinks): void {
             // 아직 판정 시각이 안 됐으면 이후 노트도 모두 미래다 → 중단
             if (n.time + missWindowSec >= t) break;
             cursor.index++;
-            if (n.gimmick === "fake") continue;
+            // fake 는 "누르면 안 되는 노트" 다 — 놓쳤다고 MISS 로 치지 않는다.
+            // (판정 대상 규칙은 visibility.isJudgeable 이 단일 출처다)
+            if (!isJudgeable(n)) continue;
             if (r.noteStateRef.current.get(n.id) !== "pending") continue;
             r.noteStateRef.current.set(n.id, "miss");
             // 워프로 시간이 크게 튄 경우(탭 비활성화) 데미지 없이 통과시켜 폭사를 막는다.

@@ -97,6 +97,7 @@ import { telegraphsFor } from "@/game/noteLayout";
 import {
   SPAWN_AHEAD,
   isNoteVisible,
+  judgeableCount,
   selectPressTarget,
   visibleNoteWindow,
 } from "@/game/visibility";
@@ -621,7 +622,11 @@ const songTime = () => {
     setPaused(false);
     stopVoice();
     audioRef.current?.stop();
-    const total = chart.notes.length;
+    // 정확도 분모는 **판정이 한 번이라도 발생할 수 있는 노트 수**다.
+    // `chart.notes.length` 를 쓰면 fake 기믹(누르면 안 되는 노트)이 분모만 잡는다 —
+    // 그 노트는 MISS 도 아니고 PERFECT 도 될 수 없어 어떤 판정에도 기여하지 않는다.
+    // (밸런스 실측: 완벽한 플레이조차 stage5 에서 96.6% 에 멈췄다)
+    const total = judgeableCount(chart.notes);
     const c = countsRef.current;
     const accuracy = calculateAccuracy(c, total);
     const grade = computeGrade(accuracy);

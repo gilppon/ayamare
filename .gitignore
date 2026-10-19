@@ -11,6 +11,9 @@ playwright/.cache/
 # 성능 프로브 산출물 — 측정값이므로 커밋하지 않는다 (state.md 35.4 참고)
 notefield-perf.txt
 perf-baseline.json
+# 밸런스 실측 산출물 — 실행마다 갱신되는 측정값 (판단 근거는 state.md 에 남긴다)
+balance-report.txt
+probe-report.txt
 *.local
 .DS_Store
 .vscode/*

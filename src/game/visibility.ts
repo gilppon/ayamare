@@ -72,13 +72,47 @@ export function selectPressTarget(
   let best: Note | null = null;
   for (const n of notes) {
     if (n.lane !== lane) continue;
-    if (n.gimmick === "fake") continue;
+    if (!isJudgeable(n)) continue;
     if (stateOf(n.id) !== "pending") continue;
     const abs = Math.abs(n.time - time);
     if (abs > badWindowSec) continue;
     if (!best || n.time < best.time) best = n;
   }
   return best;
+}
+
+/**
+ * 이 노트가 **플레이어의 평가 대상**인가.
+ *
+ * `fake` 기믹은 "누르면 안 되는 노트"다 — 누를 수도 없고(`selectPressTarget` 에서
+ * 제외) 놓쳐도 MISS 가 되지 않는다(`useGameLoop` MISS 스캔에서 제외).
+ * 즉 어떤 판정도 한 번도 발생하지 않는 노트다.
+ *
+ * ⚠️ 밸런스 실측에서 드러난 결함: 정확도 **분모**가 `chart.notes.length` 였던
+ * 관계에, 판정되지 않는 fake 노트도 들어갔다. 그 결과 완벽한 플레이조차
+ * stage5 에서 96.6% 에 멈췄다 (146노트 중 5개가 어차피 못 얻는 점수).
+ *
+ * 규칙의 출처를 **한 곳**(이 함수)으로 모은다. 판정 대상 판단이 여기저기에서
+ * 각각 복제되면 (지금은 visibility / useGameLoop 두 곳이다) 언젠가 어긋난다.
+ */
+export function isJudgeable(note: Note): boolean {
+  return note.gimmick !== "fake";
+}
+
+/** 판정 대상 노트만 모은다 (정확도 분모·시뮬레이션에서 함께 쓴다) */
+export function judgeableNotes(notes: readonly Note[]): Note[] {
+  return notes.filter(isJudgeable);
+}
+
+/**
+ * 정확도 분모 — 판정이 한 번이라도 발생할 수 있는 노트 수.
+ *
+ * `chart.notes.length` 를 쓰면 fake 노트가 분모만 잡는다 (위 결함).
+ */
+export function judgeableCount(notes: readonly Note[]): number {
+  let n = 0;
+  for (const note of notes) if (isJudgeable(note)) n++;
+  return n;
 }
 
 /**
