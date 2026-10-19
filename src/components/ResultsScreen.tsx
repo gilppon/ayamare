@@ -173,6 +173,13 @@ export default function ResultsScreen({
               </span>
             ))}
           </div>
+          {/* B: 정확도에서 BAD/MISS 는 0 이다. 이유를 알려주지 않으면 플레이어가
+              "MISS 와 같은데 왜 등급이 다르지?" 라고 버그로 인식한다. */}
+          {tap.BAD > 0 && (
+            <p className="mt-2 rounded-lg bg-orange-400/10 px-2 py-1 text-[11px] text-orange-200">
+              {tr(lang, "res.badNoCredit", { n: tap.BAD })}
+            </p>
+          )}
         </div>
 
         {/* U-08/B-01/B-08: 홀드 릴리즈 통계 + 강제 해제 경고 */}

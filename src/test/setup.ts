@@ -272,8 +272,30 @@ if (!("AudioContext" in window)) {
   });
 }
 
-/** 생성된 AudioContext 인스턴스 목록 — 테스트에서 곡 시각 전진에 사용 */
+/**
+ * 생성된 AudioContext 인스턴스 목록 — 테스트에서 곡 시각 전진에 사용.
+ *
+ * ⚠️ **테스트 간 초기화 필수.** 컨텍스트가 남으면 `advanceAudio` 가 옛 컨텍스트까지
+ * 함께 전진해, 테스트가 `audioContexts.at(-1)` 로 잡은 컨텍스트의 곡 시각과
+ * 실제 타이머가 어긋난다. 증상은 "판정이 경계에서 1타만 의도치 않게 나온다" 같은
+ * 말하기 어려운 형태로 나타난다 (B 세션에서 실제로 겪음).
+ */
 export const audioContexts: AudioContextStub[] = [];
+
+/** 현재 테스트에서 사용할 컨텍스트 (마지막에 생성된 것) */
+export function currentAudioContext(): AudioContextStub {
+  const ctx = audioContexts[audioContexts.length - 1];
+  if (!ctx) throw new Error("AudioContext 가 아직 생성되지 않았다 — 게임 시작 전인가?");
+  return ctx;
+}
+
+beforeEach(() => {
+  audioContexts.length = 0;
+});
+
+afterEach(() => {
+  audioContexts.length = 0;
+});
 type AudioCtor = new () => AudioContextStub;
 const OriginalCtor = (window as unknown as { AudioContext: AudioCtor }).AudioContext;
 class TrackedAudioContext extends OriginalCtor {

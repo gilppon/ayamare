@@ -278,19 +278,36 @@ export const JUDGMENTS: Record<
   MISS: { label: "MISS", color: "#f43f5e", score: 0 },
 };
 
+/**
+ * 주식 등락 (곱셈 계수, 노트 1타당).
+ *
+ * B: BAD 페널티를 MISS 쪽으로 크게 올린다.
+ *   기존 -2.5% 는 "엉뚱한 타이밍에 치는 것"이 아무것도 안 누른 것보다 **6배 덜**
+ *   손해였다. 100노트 기준 주가가 8% 남는 결과, 감을 잃은 플레이어가
+ *   "일단 아무 레인이나 치자" 를 합리적 선택으로 받아들이게 된다.
+ *   BAD 는 여전히 MISS 보다 낫지만 (레인/입력 의지는 있었다), 그 격차가
+ *   "엉뚱하게 치기" 를 권 rewarding 선택으로 만들지 않을 만큼만 남긴다.
+ */
 export const STOCK_DELTA: Record<Judgment, number> = {
   PERFECT: 0.034,
   GREAT: 0.018,
   GOOD: 0.008,
-  BAD: -0.025,
+  BAD: -0.09,
   MISS: -0.14,
 };
 
+/**
+ * 분노 증감.
+ *
+ * B: 같은 이유로 BAD 를 4 → 7 로 올린다.
+ *   이제 "아무것도 안침"(+9)과 "엉뚱하게 침"(+7) 의 차이가 방향성만 남고,
+ *   무작정 누르기로 분노를 속이는 전략이 사라진다.
+ */
 export const ANGER_DELTA: Record<Judgment, number> = {
   PERFECT: -6,
   GREAT: -3,
   GOOD: -1,
-  BAD: 4,
+  BAD: 7,
   MISS: 9,
 };
 

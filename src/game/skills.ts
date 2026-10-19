@@ -14,6 +14,8 @@ export interface SkillDef {
 export const SKILLS: SkillDef[] = [
   { id: "teardrops", name: "눈물 안약", cost: 750, desc: "GREAT 판정을 PERFECT로 보정", category: "timing" },
   { id: "steady_hands", name: "떨림 방지 장갑", cost: 650, desc: "판정 윈도우 +12% (관대)", category: "timing" },
+  // B: 정확도에서 BAD 가 0 이 되었으므로, 이 스킬은 이제
+  // "엉뚱하게 친 노트에 점수를 돌려주는 유일한 수단" 이다. 그만큼 강력하다.
   { id: "wide_heart", name: "관대한 마음", cost: 850, desc: "BAD 판정을 GOOD으로 완화", category: "timing" },
   { id: "bulletproof", name: "방탄 정장", cost: 1000, desc: "MISS 시 콤보 보호 + 주가 하락 방어", category: "combo" },
   { id: "combo_chain", name: "박수 유도 요원", cost: 950, desc: "PERFECT 시 콤보 +2", category: "combo" },

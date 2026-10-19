@@ -313,6 +313,11 @@ const inputOffsetSec = audioOffsetMs / 1000;
 
 const songTime = () => {
     const a = audioRef.current;
+    // ⚠️ `startTimeRef.current === 0` 을 "아직 시작 안 함" 으로 쓰면 안 된다.
+    // 곡이 AudioContext 시각 0 에서 시작하면 songStart 가 정확히 SONG_PREROLL_SEC(0.12)
+    // 가 되고, 그 이전 순간 `startTimeRef` 가 0 이므로 이 가드가 **성립해 버린다**.
+    // 결과: 곡 시각이 0 으로 굳어 모든 입력이 첫 노트 기준으로 판정된다.
+    // 존재 여부만 확인한다.
     if (!a || startTimeRef.current === 0) return 0;
     return Math.max(0, a.now() - startTimeRef.current);
   };
