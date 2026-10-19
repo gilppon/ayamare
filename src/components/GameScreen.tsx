@@ -35,7 +35,13 @@ import {
   judgeTap,
 } from "@/game/judgment";
 import { hapticFor } from "@/game/haptics";
-import { DOGEZA_LINE, nextApologyLine, speakApology, stopVoice } from "@/game/voice";
+import {
+  DOGEZA_LINE,
+  nextApologyLine,
+  primeVoices,
+  speakApology,
+  stopVoice,
+} from "@/game/voice";
 import { tr } from "@/i18n/ui";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useMetaStore } from "@/stores/metaStore";
@@ -297,6 +303,14 @@ export default function GameScreen({
     onRunActiveChange?.(phase === "playing" && !paused);
     return () => onRunActiveChange?.(false);
   }, [phase, paused, onRunActiveChange]);
+
+  // TTS 음성 목록을 미리 적재한다 (첫 콤보 마일스톤에서 발화 지연을 막기 위함).
+  // E: 이건 예전에 voice.ts 의 모듈 최상위에서 실행됐다 — import 만으로
+  // window.speechSynthesis 에 접근하므로 테스트에서 격리할 수 없었다.
+  // 여기서는 게임 화면에 진입할 때 한 번, 명시적으로 부른다.
+  useEffect(() => {
+    primeVoices();
+  }, []);
 
 
   /**

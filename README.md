@@ -16,7 +16,7 @@ npm run build        # 타입체크 + 프로덕션 빌드 (PWA)
 npm run preview      # 빌드 미리보기
 npm run typecheck    # tsc --noEmit (앱 + E2E + vitest 설정)
 npm run lint         # eslint (경고 0 tolerated — --max-warnings 0)
-npm run test         # vitest (544 케이스, jsdom)
+npm run test         # vitest (622 케이스, jsdom)
 npm run test:coverage# 커버리지 게이트 포함 실행
 npm run verify       # typecheck + lint + test
 npm run test:e2e     # Playwright (Chromium)
@@ -33,6 +33,7 @@ npm run test:perf    # 성능 프로브 (측정값 단정 없음 — 구조 불�
 | `src/game/editorChart.ts` | 에디터 <-> Chart 8분박자 좌표계 변환 |
 | `src/game/charts/*.json` | 스테이지 채보 데이터 (5개 자산, 스키마 검증 대상) |
 | `src/game/chartData.ts` | 채보 데이터 스키마 검증 + 데이터 → Chart 변환 |
+| `src/game/effects.ts` | 부수효과(햅틱/TTS) 실패 기록 — 삼키되 조용히 사라지지 않게 |
 | `src/components/GameScreen.tsx` | 게임 루프, 판정, 상태 오케스트레이션 |
 | `src/components/game/NoteField.tsx` | 레인 / 노트 / 리시버 / 판정 연출 (프레젠테이션) |
 | `src/components/game/GameHud.tsx` | HUD · 사이드 패널 · 레인 키 |

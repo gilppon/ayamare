@@ -123,13 +123,26 @@ test.describe("오디오", () => {
     await enterGame(page);
     const t = await page.evaluate(async () => {
       const ctx = new AudioContext();
-      if (ctx.state === "suspended") await ctx.resume();
-      const t0 = ctx.currentTime;
-      await new Promise((r) => setTimeout(r, 250));
-      const t1 = ctx.currentTime;
-      await ctx.close();
-      return { t0, t1 };
+      try {
+        if (ctx.state === "suspended") await ctx.resume();
+        // ⚠️ 여기서 "정확히 N ms 후에 전진했나"를 검사하면 안 된다.
+        // AudioContext 시계는 오디오 스레드가 서비스될 때만 전진하고, 그 스레드는
+        // CPU 부하(병렬 워커 8개)에서 250ms 안에 돌지 않을 수 있다.
+        // 이전의 고정 대기는 그 조건에서 이 테스트를 flake 로 만들었다.
+        // 검증할 것은 "전진하는가" 이므로, 전진할 때까지 **기다린다**.
+        const t0 = ctx.currentTime;
+        const deadline = performance.now() + 5000;
+        let t1 = t0;
+        while (performance.now() < deadline && t1 <= t0) {
+          await new Promise((r) => setTimeout(r, 50));
+          t1 = ctx.currentTime;
+        }
+        return { t0, t1, state: ctx.state };
+      } finally {
+        await ctx.close();
+      }
     });
+    expect(t.state).not.toBe("closed");
     expect(t.t1).toBeGreaterThan(t.t0);
   });
 
