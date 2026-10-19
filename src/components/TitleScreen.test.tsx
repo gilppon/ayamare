@@ -97,11 +97,38 @@ describe("TitleScreen", () => {
     expect(label).toBeTruthy();
   });
 
-  it("스테이지 버튼이 stageId 를 넘긴다", () => {
+  /**
+   * C: 첫 스테이지만 처음부터 열려 있고, 나머지는 앞 스테이지의
+   * 정확도 기준을 만족해야 열린다.
+   */
+  it("스테이지 버튼이 stageId 를 넘긴다 (해금된 것만)", () => {
     const onStart = vi.fn();
+    // stage2 해금 기준: stage1 정확도 80%
+    useProgressStore.setState({
+      bestByStage: { stage1: { score: 1000, accuracy: 0.9, grade: "SS" } },
+    });
+    render(<TitleScreen {...baseProps} onStart={onStart} />);
+    fireEvent.click(screen.getByRole("button", { name: /STAGE 1/ }));
+    expect(onStart).toHaveBeenCalledWith("stage1");
+  });
+
+  it("C: 잠긴 스테이지는 클릭해도 진입되지 않는다", () => {
+    const onStart = vi.fn();
+    useProgressStore.setState({ bestByStage: {} });
     render(<TitleScreen {...baseProps} onStart={onStart} />);
     fireEvent.click(screen.getByRole("button", { name: /STAGE 3/ }));
-    expect(onStart).toHaveBeenCalledWith("stage3");
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it("C: 기준 정확도 달성 시 다음 스테이지가 열린다", () => {
+    const onStart = vi.fn();
+    useProgressStore.setState({
+      bestByStage: { stage1: { score: 1000, accuracy: 0.85, grade: "SS" } },
+    });
+    render(<TitleScreen {...baseProps} onStart={onStart} />);
+    // stage2 기준 80% → 열림
+    fireEvent.click(screen.getByRole("button", { name: /STAGE 2/ }));
+    expect(onStart).toHaveBeenCalledWith("stage2");
   });
 
   it("데일리 버튼이 'daily' 를 넘긴다", () => {

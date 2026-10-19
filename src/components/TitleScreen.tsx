@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { LANES, stageLabelFor } from "@/game/constants";
+import { STAGES, prevStage, stageTitleKey, unlockProgress } from "@/game/progression";
 import { getDailyKey } from "@/game/daily";
 import { MISSIONS, isMissionComplete, missionProgress, missionText } from "@/game/missions";
 import { SKILLS, skillText, type SkillCategory } from "@/game/skills";
@@ -8,7 +9,7 @@ import type { SkillType } from "@/game/types";
 import { tr } from "@/i18n/ui";
 import ManagerKim from "./ManagerKim";
 import { useMetaStore } from "@/stores/metaStore";
-import { useProgressStore } from "@/stores/progressStore";
+import { useProgressStore, useUnlocks } from "@/stores/progressStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 interface TitleScreenProps {
@@ -49,6 +50,8 @@ export default function TitleScreen({ points, ownedSkills, equippedSkill, onBuy,
   const addPoints = useMetaStore((s) => s.addPoints);
   const runHistory = useProgressStore((s) => s.runHistory);
   const bestByStage = useProgressStore((s) => s.bestByStage);
+  /** C: 해금은 저장하지 않고 `bestByStage` 에서 파생한다 (단일 진실) */
+  const { unlocked } = useUnlocks();
   // 호위 김부장: 15°→45°→90°→도게자 반복 숙이기 + 클릭 이스터에그
   const [bowStep, setBowStep] = useState(1);
   const [easter, setEaster] = useState(false);
@@ -221,45 +224,47 @@ export default function TitleScreen({ points, ownedSkills, equippedSkill, onBuy,
             </div>
 
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <button
-                onClick={() => onStart("stage1")}
-                className="rounded-full border border-rose-400/40 bg-rose-500/10 px-8 py-3 font-display text-xl text-rose-100 transition hover:bg-rose-500/20"
-                style={{ boxShadow: "0 0 40px rgba(225,29,72,0.25)" }}
-              >
-                {tr(lang, "title.stage1")}
-              </button>
-
-              <button
-                onClick={() => onStart("stage2")}
-                className="rounded-full border border-purple-400/40 bg-purple-500/10 px-8 py-3 font-display text-xl text-purple-100 transition hover:bg-purple-500/20"
-                style={{ boxShadow: "0 0 40px rgba(168,85,247,0.25)" }}
-              >
-                {tr(lang, "title.stage2")}
-              </button>
-
-              <button
-                onClick={() => onStart("stage3")}
-                className="rounded-full border border-sky-400/40 bg-sky-500/10 px-8 py-3 font-display text-xl text-sky-100 transition hover:bg-sky-500/20"
-                style={{ boxShadow: "0 0 40px rgba(56,189,248,0.25)" }}
-              >
-                {tr(lang, "title.stage3")}
-              </button>
-
-              <button
-                onClick={() => onStart("stage4")}
-                className="rounded-full border border-orange-400/40 bg-orange-500/10 px-8 py-3 font-display text-xl text-orange-100 transition hover:bg-orange-500/20"
-                style={{ boxShadow: "0 0 40px rgba(251,146,60,0.25)" }}
-              >
-                {tr(lang, "title.stage4")}
-              </button>
-
-              <button
-                onClick={() => onStart("stage5")}
-                className="rounded-full border border-red-400/40 bg-red-500/10 px-8 py-3 font-display text-xl text-red-100 transition hover:bg-red-500/20"
-                style={{ boxShadow: "0 0 40px rgba(248,113,113,0.3)" }}
-              >
-                {tr(lang, "title.stage5")}
-              </button>
+              {STAGES.map((stage) => {
+                const open = unlocked[stage.id];
+                const prog = unlockProgress(stage.id, bestByStage);
+                return (
+                  <button
+                    key={stage.id}
+                    onClick={() => open && onStart(stage.id)}
+                    disabled={!open}
+                    aria-disabled={!open}
+                    title={
+                      open
+                        ? undefined
+                        : tr(lang, "title.lockedHint", {
+                            prev: tr(lang, stageTitleKey(prevStage(stage.id)?.id ?? "stage1")),
+                            pct: Math.round(stage.requiredAccuracy * 100),
+                            prog: Math.round(prog * 100),
+                          })
+                    }
+                    className={`rounded-full border px-8 py-3 font-display text-xl transition ${
+                      open
+                        ? "text-white hover:brightness-125"
+                        : "cursor-not-allowed border-white/10 bg-white/5 text-slate-600"
+                    }`}
+                    style={
+                      open
+                        ? {
+                            borderColor: `${stage.color}66`,
+                            backgroundColor: `${stage.color}1a`,
+                            color: stage.color,
+                            boxShadow: `0 0 40px ${stage.color}33`,
+                          }
+                        : undefined
+                    }
+                  >
+                    {tr(lang, stageTitleKey(stage.id))}
+                    {!open && (
+                      <span className="ml-2 text-xs text-slate-500">🔒</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
             <button

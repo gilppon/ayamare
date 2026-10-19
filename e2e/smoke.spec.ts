@@ -23,6 +23,39 @@ test("부팅하면 타이틀 화면이 나타난다", async ({ page }) => {
   await expect(page.getByRole("button", { name: /DAILY/ })).toBeVisible();
 });
 
+/**
+ * C: 스테이지 해금.
+ *
+ * 첫 스테이지만 열려 있고 나머지는 잠겨 있어야 한다.
+ * 잠긴 버튼은 `disabled` 이므로 클릭해도 진입되지 않는다 — 브라우저에서 확인한다.
+ */
+test("C: 첫 스테이지만 열려 있고 나머지는 잠겨 있다", async ({ page }) => {
+  await page.goto("/");
+  const first = page.getByRole("button", { name: /STAGE 1/ });
+  await expect(first).toBeEnabled();
+
+  for (const n of [2, 3, 4, 5]) {
+    await expect(page.getByRole("button", { name: new RegExp(`STAGE ${n}`) })).toBeDisabled();
+  }
+});
+
+test("C: 잠긴 스테이지는 클릭해도 게임이 시작되지 않는다", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /STAGE 3/ }).click({ force: true });
+  // 게임 화면 진입 실패 — 타이틀에 머물러 있어야 한다
+  await expect(page.getByRole("button", { name: /STAGE 1/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /시작/ })).toHaveCount(0);
+});
+
+test("C: 잠긴 스테이지는 해금 조건을 안내한다", async ({ page }) => {
+  await page.goto("/");
+  const locked = page.getByRole("button", { name: /STAGE 2/ });
+  // title 속성에 해금 조건이 들어 있다
+  const title = await locked.getAttribute("title");
+  expect(title).toContain("80");
+  expect(title).toContain("STAGE 1");
+});
+
 test("페이지 타이틀과 html lang 이 한국어로 설정된다", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveTitle(K("app.title"));

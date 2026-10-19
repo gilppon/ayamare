@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GRADE_COLORS, JUDGMENTS, stageLabelFor } from "@/game/constants";
 import { MISSIONS, missionText } from "@/game/missions";
 import { BUCKET_COUNT, bucketHeights } from "@/game/timing";
+import { stageTitleKey } from "@/game/progression";
 import type { GameResult, Judgment, JudgmentCounts, TimingStats } from "@/game/types";
 import { tr, type Lang } from "@/i18n/ui";
 import { useMetaStore } from "@/stores/metaStore";
@@ -46,6 +47,8 @@ export default function ResultsScreen({
   // 최고점과 **동점**이어도 신기록이 된다. 갱신 전 값으로 판정한
   // `lastRunNewRecord` 를 신뢰한다.
   const isNewRecord = useProgressStore((s) => s.lastRunNewRecord);
+  /** C: 이번 런으로 새로 열린 스테이지 */
+  const lastNewlyUnlocked = useProgressStore((s) => s.lastNewlyUnlocked);
 
   const releaseTotal = release ? ORDER.reduce((a, j) => a + release[j], 0) : 0;
   const forced = result.forcedReleases ?? 0;
@@ -213,6 +216,20 @@ export default function ResultsScreen({
         )}
 
         <TimingPanel stats={result.timing} />
+
+        {/* C: 새로 열린 스테이지 — 진행감의 핵심 순간 */}
+        {lastNewlyUnlocked.length > 0 && (
+          <div className="mt-4 w-full rounded-xl border border-amber-300/30 bg-amber-400/10 px-4 py-3 text-center">
+            <div className="font-display text-lg text-amber-200">{tr(lang, "res.unlocked")}</div>
+            <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+              {lastNewlyUnlocked.map((id) => (
+                <span key={id} className="font-display text-sm text-amber-100">
+                  {tr(lang, stageTitleKey(id))}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <button

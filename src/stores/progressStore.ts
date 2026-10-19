@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { del, get, set } from "idb-keyval";
@@ -8,6 +9,7 @@ import {
   type ProgressSnapshot,
 } from "@/game/missions";
 import { getDailyKey } from "@/game/daily";
+import { computeUnlocks, isStageId, newlyUnlocked } from "@/game/progression";
 import type { GameResult } from "@/game/types";
 
 const idbStorage = createJSONStorage(() => ({
@@ -60,6 +62,8 @@ interface ProgressState extends ProgressSnapshot {
    * "갱신 전 값" 은 여기서만 존재하므로 기록 시점에 판정해 둔다.
    */
   lastRunNewRecord: boolean;
+  /** 이번 런으로 새로 열린 스테이지 (결과 화면 표기용) */
+  lastNewlyUnlocked: string[];
   recordRun: (result: GameResult, stageId: string) => string[];
   claim: (missionId: string) => number;
 }
@@ -98,6 +102,7 @@ export const useProgressStore = create<ProgressState>()(
       runHistory: [],
       bestByStage: {},
       lastRunNewRecord: false,
+      lastNewlyUnlocked: [],
       recordRun: (result, stageId) => {
         const prev = get();
         const prevSnapshot: ProgressSnapshot = {
@@ -135,14 +140,27 @@ export const useProgressStore = create<ProgressState>()(
         const baseStage = baseStageOf(stageId);
         const prevBest = prev.bestByStage[baseStage];
         const isNewRecord = !prevBest || result.score > prevBest.score;
+
+        /**
+         * C: 해금 판정은 **갱신 전** 상태와 비교해야 한다.
+         *
+         * 이미 갱신된 `bestByStage` 로 비교하면 이번 런이 연 스테이지가
+         * "원래 열려 있던 것" 으로 보여 새로 열렸다고 표시할 수 없다.
+         * 그래서 `recordRun` 진입 시점의 해금 상태를 먼저 계산해 둔다.
+         *
+         * 커스텀/데일리 런은 진행에 영향이 없다 (스테이지 최고 기록을 갱신하지 않음).
+         */
+        const unlockedBefore = computeUnlocks(prev.bestByStage).unlocked;
+
         const bestByStage = { ...prev.bestByStage };
-        if (isNewRecord) {
+        if (isNewRecord && isStageId(baseStage)) {
           bestByStage[baseStage] = {
             score: result.score,
             accuracy: result.accuracy,
             grade: result.grade,
           };
         }
+        const unlockedIds = newlyUnlocked(result.accuracy, unlockedBefore);
         const runHistory = [
           ...prev.runHistory,
           {
@@ -163,6 +181,7 @@ export const useProgressStore = create<ProgressState>()(
           runHistory,
           bestByStage,
           lastRunNewRecord: isNewRecord,
+          lastNewlyUnlocked: unlockedIds,
         });
         return newly;
       },
@@ -203,7 +222,20 @@ export const useProgressStore = create<ProgressState>()(
         claimed: s.claimed,
         runHistory: s.runHistory,
         bestByStage: s.bestByStage,
+        // lastNewlyUnlocked 는 UI 전용 순간값이라 영속화하지 않는다.
       }),
     }
   )
 );
+
+/**
+ * 현재 해금 상태 (파생 상태).
+ *
+ * 저장하지 않는다. `bestByStage` 가 유일한 원본이고 해금 여부는 그 값에서
+ * **계산**된다 — 두 값을 따로 저장하면 언젠가는 반드시 어긋난다.
+ * (예: 정확도 하향을 바꿨는데 저장된 해금 플래그만 남아 있는 상황)
+ */
+export function useUnlocks() {
+  const bestByStage = useProgressStore((s) => s.bestByStage);
+  return useMemo(() => computeUnlocks(bestByStage), [bestByStage]);
+}

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+﻿import { describe, expect, it, vi, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import { useMetaStore } from "@/stores/metaStore";
@@ -80,8 +80,31 @@ beforeEach(() => {
   } as never);
 });
 
-const startStage = (n: number) =>
+/**
+ * C: 스테이지는 이제 순차 해금이다. 라우팅 테스트는 임의 스테이지에
+ * 진입해야 하므로 앞 스테이지들을 기준 이상으로 클리어한 상태를 만든다.
+ */
+const unlockThrough = (n: number) => {
+  const bestByStage: Record<string, { score: number; accuracy: number; grade: string }> = {};
+  for (let i = 1; i <= n; i++) {
+    bestByStage[`stage${i}`] = { score: 10000, accuracy: 1, grade: "SSS" };
+  }
+  useProgressStore.setState({ bestByStage } as never);
+};
+
+const startStage = (n: number) => {
+  unlockThrough(n);
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`STAGE ${n}`) }));
+};
+
+/**
+ * 해금을 먼저 갖춘 뒤 렌더한다.
+ * (렌더 이후 store 를 바꾸면 이미 그려진 잠금 버튼이 그대로 남는다)
+ */
+const renderUnlocked = (n: number) => {
+  unlockThrough(n);
+  return render(<App />);
+};
 
 /** 게임이 콜백을 부르는 시점 — App 의 setState 를 act 안에서 흘려야 렌더된다 */
 const finishRun = (r: GameResult = result) => act(() => gameMock.finish!(r));
@@ -109,7 +132,7 @@ describe("App 부팅", () => {
 
 describe("App 라우팅", () => {
   it("B-10: 스테이지 버튼의 stageId 를 GameScreen 에 그대로 넘긴다", () => {
-    render(<App />);
+    renderUnlocked(3);
     startStage(3);
     expect(screen.getByTestId("game")).toBeTruthy();
     expect(gameMock.props.at(-1)!.stageId).toBe("stage3");
@@ -132,7 +155,7 @@ describe("App 라우팅", () => {
   });
 
   it("게임 종료 시 결과 화면으로 가고 포인트를 지급한다", () => {
-    render(<App />);
+    renderUnlocked(2);
     startStage(2);
     finishRun();
     expect(screen.getByText("OK ENDING")).toBeTruthy();
@@ -141,7 +164,7 @@ describe("App 라우팅", () => {
   });
 
   it("B-10 회귀: 재도전은 같은 stageId 를 쓴다", () => {
-    render(<App />);
+    renderUnlocked(4);
     startStage(4);
     finishRun();
     fireEvent.click(screen.getByRole("button", { name: tr("ko", "res.retry") }));
@@ -150,7 +173,7 @@ describe("App 라우팅", () => {
   });
 
   it("홈으로 가면 타이틀로 돌아온다", () => {
-    render(<App />);
+    renderUnlocked(1);
     startStage(1);
     finishRun();
     fireEvent.click(screen.getByRole("button", { name: tr("ko", "res.home") }));
@@ -158,7 +181,7 @@ describe("App 라우팅", () => {
   });
 
   it("포기하면 결과 기록 없이 타이틀로 돌아온다", () => {
-    render(<App />);
+    renderUnlocked(1);
     startStage(1);
     act(() => gameMock.quit!());
     expect(screen.getByRole("button", { name: /STAGE 1/ })).toBeTruthy();
@@ -176,7 +199,7 @@ describe("B-04 설정 차단", () => {
   });
 
   it("플레이가 끝나면 설정 버튼이 다시 나온다", () => {
-    render(<App />);
+    renderUnlocked(1);
     startStage(1);
     fireEvent.click(screen.getByRole("button", { name: "run-start" }));
     finishRun();
