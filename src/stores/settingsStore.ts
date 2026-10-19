@@ -51,6 +51,20 @@ export function rebindKey(map: KeyMap, key: string, lane: number): KeyMap {
 interface SettingsState {
   reduceMotionUserSet: boolean;
   timingScale: number;
+  /**
+   * 오디오 출력 지연 보정 (ms).
+   *
+   * 유선 헤드폰은 10~30ms, 블루투스는 120~250ms 지연한다. 보정 없이는
+   * 블루투스 사용자가 구조적으로 PERFECT(±55ms)를 맞힐 수 없다.
+   *
+   * **판정에만** 적용한다 (렌더에는 적용하지 않는다). 노트의 시각적 위치는
+   * 실제 오디오를 따르고, 입력 시각에서 이 값을 빼서 판정만 앞당긴다.
+   * 그래야 "소리로 듣고, 눈으로 보고, 보정된 손맛으로 치는" 플레이가 유지된다.
+   * (시각까지 옮기면 노트를 따라 치는 플레이 자체가 어긋난다)
+   *
+   * 양수 = 오디오가 늦게 들렸으므로 판정을 그만큼 뒤로 (= 손을 더 빨리 뻗는다).
+   */
+  audioOffsetMs: number;
   reduceMotion: boolean;
   colorblind: boolean;
   haptics: boolean;
@@ -65,9 +79,16 @@ interface SettingsState {
   resetKeys: () => void;
   setLang: (v: Lang) => void;
   setVoice: (v: boolean) => void;
+  /** 오디오 출력 지연 보정값 (ms). 양수 = 판정을 뒤로 당긴다 */
+  setAudioOffset: (v: number) => void;
   /** 사용자가 모션 감소 설정을 직접 조작했는지 (OS 설정 따르기를 중단) */
   setReduceMotionUserSet: (v: boolean) => void;
 }
+
+/** 오프셋 보정 허용 범위 (ms). 블루투스 지연 상단(~250ms)을 덮는다. */
+export const OFFSET_MIN_MS = -200;
+export const OFFSET_MAX_MS = 200;
+const OFFSET_STEP_MS = 5;
 
 function readInitial<T>(key: string, fallback: T): T {
   try {
@@ -91,10 +112,18 @@ function readLang(fallback: Lang): Lang {
   return v === "ko" || v === "en" || v === "ja" ? v : fallback;
 }
 
+/** 오프셋 값을 허용 범위로 클램프 + 5ms 격자에 맞춘다. */
+export function clampOffset(ms: number): number {
+  if (!Number.isFinite(ms)) return 0;
+  const clamped = Math.min(OFFSET_MAX_MS, Math.max(OFFSET_MIN_MS, ms));
+  return Math.round(clamped / OFFSET_STEP_MS) * OFFSET_STEP_MS;
+}
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       timingScale: readInitial<number>("apolo_timing_scale", 1),
+      audioOffsetMs: clampOffset(readInitial<number>("apolo_audio_offset", 0)),
       /**
        * OS 의 `prefers-reduced-motion` 를 **초기값**으로만 따른다.
        * (매번 읽으면 사용자가 끄고 저장해도 다음 부팅에서 다시 켜져 사용자 선택이 무력화된다)
@@ -121,6 +150,7 @@ export const useSettingsStore = create<SettingsState>()(
       resetKeys: () => set({ keyMap: { ...DEFAULT_KEY_MAP } }),
       setLang: (v) => set({ lang: v }),
       setVoice: (v) => set({ voice: v }),
+      setAudioOffset: (v) => set({ audioOffsetMs: clampOffset(v) }),
       /** 사용자가 직접 껐다/켰다 — 이후 OS 설정을 따르지 않는다 */
       setReduceMotionUserSet: (v) => set({ reduceMotionUserSet: v }),
     }),
@@ -128,6 +158,7 @@ export const useSettingsStore = create<SettingsState>()(
       name: "apolo_settings",
       partialize: (s) => ({
         timingScale: s.timingScale,
+        audioOffsetMs: s.audioOffsetMs,
         reduceMotion: s.reduceMotion,
         reduceMotionUserSet: s.reduceMotionUserSet,
         colorblind: s.colorblind,
@@ -145,6 +176,7 @@ if (typeof window !== "undefined") {
   useSettingsStore.subscribe((s) => {
     try {
       localStorage.setItem("apolo_timing_scale", String(s.timingScale));
+      localStorage.setItem("apolo_audio_offset", String(s.audioOffsetMs));
       localStorage.setItem("apolo_reduce_motion", JSON.stringify(s.reduceMotion));
       localStorage.setItem("apolo_reduce_motion_set", JSON.stringify(s.reduceMotionUserSet));
       localStorage.setItem("apolo_colorblind", JSON.stringify(s.colorblind));

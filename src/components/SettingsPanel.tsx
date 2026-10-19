@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { LANES, LANE_NAMES, isBindableKey } from "@/game/constants";
 import { LANGS, tr } from "@/i18n/ui";
-import { DEFAULT_KEYS, useSettingsStore } from "@/stores/settingsStore";
+import {
+  DEFAULT_KEYS,
+  OFFSET_MAX_MS,
+  OFFSET_MIN_MS,
+  useSettingsStore,
+} from "@/stores/settingsStore";
 
 export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   const timingScale = useSettingsStore((s) => s.timingScale);
@@ -20,6 +25,8 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   const setLang = useSettingsStore((s) => s.setLang);
   const voice = useSettingsStore((s) => s.voice);
   const setVoice = useSettingsStore((s) => s.setVoice);
+  const audioOffsetMs = useSettingsStore((s) => s.audioOffsetMs);
+  const setAudioOffset = useSettingsStore((s) => s.setAudioOffset);
 
   const [rebindLane, setRebindLane] = useState<number | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -115,6 +122,34 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
           <Toggle label={tr(lang, "settings.colorblind")} value={colorblind} onChange={setColorblind} />
           <Toggle label={tr(lang, "settings.haptics")} value={haptics} onChange={setHaptics} />
           <Toggle label={tr(lang, "settings.voice")} value={voice} onChange={setVoice} />
+
+          <div className="rounded-xl border border-white/5 bg-slate-800/50 p-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-300">
+                {tr(lang, "settings.offset")}
+                <span className="ml-2 text-xs text-slate-500">{tr(lang, "settings.offsetHint")}</span>
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="w-14 text-[10px] text-slate-600">{tr(lang, "res.timingEarly")}</span>
+                <input
+                  type="range"
+                  min={OFFSET_MIN_MS}
+                  max={OFFSET_MAX_MS}
+                  step={5}
+                  value={audioOffsetMs}
+                  onChange={(e) => setAudioOffset(parseFloat(e.target.value))}
+                  aria-label={tr(lang, "settings.offset")}
+                />
+                <span className="w-14 text-right text-[10px] text-slate-600">
+                  {tr(lang, "res.timingLate")}
+                </span>
+                <span className="w-14 shrink-0 text-right font-display text-sm text-amber-200">
+                  {audioOffsetMs > 0 ? "+" : ""}
+                  {audioOffsetMs}ms
+                </span>
+              </div>
+            </label>
+          </div>
 
           <div className="rounded-xl border border-white/5 bg-slate-800/50 p-3">
             <div className="mb-2 flex items-center justify-between">

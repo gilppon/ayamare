@@ -25,6 +25,7 @@ import {
   type PressContext,
 } from "@/game/journalistAI";
 import { ddaTimingScale, initialDda, updateDda } from "@/game/dda";
+import { timingStats, withReliability } from "@/game/timing";
 import { planFeedback } from "@/game/feedback";
 import {
   calculateAccuracy,
@@ -123,6 +124,7 @@ export default function GameScreen({
   onRunActiveChange,
 }: GameScreenProps) {
   const timingScale = useSettingsStore((s) => s.timingScale);
+  const audioOffsetMs = useSettingsStore((s) => s.audioOffsetMs);
   const keyMap = useSettingsStore((s) => s.keyMap);
   const reduceMotion = useSettingsStore((s) => s.reduceMotion);
   const colorblind = useSettingsStore((s) => s.colorblind);
@@ -178,6 +180,8 @@ export default function GameScreen({
   const releaseCountsRef = useRef<JudgmentCounts>(emptyCounts());
   const forcedReleaseRef = useRef(0);
   const qIndexRef = useRef(0);
+  /** A: 탭 판정 오차(ms). 양수 = 늦게 침. 결과 화면의 타이밍 히스토그램 원본 */
+  const timingErrorsRef = useRef<number[]>([]);
   /** P-01: MISS 판정 커서 (정렬된 노트 배열에서 앞으로만 스캔) */
   const missCursorRef = useRef<{ notes: Note[] | null; index: number }>({ notes: null, index: 0 });
   const finishedRef = useRef(false);
@@ -295,7 +299,19 @@ export default function GameScreen({
   }, [phase, paused, onRunActiveChange]);
 
 
-  const songTime = () => {
+  /**
+ * 입력 시각에만 적용되는 지연 보정 (판정 전용).
+ *
+ * 렌더(노트 위치)에는 적용하지 않는다. 노트는 실제 오디오를 따라 움직이고,
+ * 입력 시각에서 이 값을 빼서 **판정만** 앞당긴다. 그래야 "소리로 듣고, 눈으로
+ * 보고, 보정된 손맛으로 치는" 플레이가 유지된다.
+ *
+ * 양수 = 오디오가 늦게 들린 환경(블루투스) → 판정을 그만큼 뒤로 당겨
+ * 실제로 들린 소리를 따라치는 손이 PERFECT 을 맞히게 한다.
+ */
+const inputOffsetSec = audioOffsetMs / 1000;
+
+const songTime = () => {
     const a = audioRef.current;
     if (!a || startTimeRef.current === 0) return 0;
     return Math.max(0, a.now() - startTimeRef.current);
@@ -435,7 +451,9 @@ export default function GameScreen({
     }
   };
 
-  const handlePress = (lane: number, time: number) => {
+  const handlePress = (lane: number, rawTime: number) => {
+    // 지연 보정: 입력 시각에서만 빼서 판정한다 (렌더는 실제 오디오를 따른다).
+    const time = rawTime - inputOffsetSec;
     // 실효 BAD 윈도우(DDA·스킬 반영)로 후보 탐색 + 가장 빠른 노트 우선.
     // 구규칙(가장 가까운 노트)은 8분박자 구간에서 뒷노트를 먼저 먹어
     // 앞노트가 MISS 처리되는 문제를 일으켰다.
@@ -452,6 +470,14 @@ export default function GameScreen({
     const abs = Math.abs(best.time - time);
     const raw = judgeTap(abs, equippedSkill, timingWindows);
     const judgment = upgradeTapJudgment(raw, skills);
+
+    // 타이밍 진단: **보정 후** 오차를 기록한다.
+    // (보정 전 오차를 기록하면 설정값이 self-feedback 루프를 만든다)
+    //
+    // 부호 규약: **양수 = 늦게 침, 음수 = 빨리 침.**
+    //   error = 입력시각 - 노트시각
+    // 이 규약이 결과 화면 히스토그램(x축 방향)과 설정 슬라이더 방향을 모두 결정한다.
+    timingErrorsRef.current.push((time - best.time) * 1000);
 
     noteStateRef.current.set(best.id, best.hold > 0 ? "holding" : "hit");
     lastTapRef.current = { action: best.action, time };
@@ -587,6 +613,8 @@ export default function GameScreen({
       earnPoints(scoreRef.current, accuracy, maxComboRef.current, dogezaHits) *
         (isDaily ? DAILY_POINTS_MULT : 1)
     );
+    // A: 타이밍 진단 — 사용자가 자기 오디오 지연을 스스로 보정하게 한다
+    const timing = withReliability(timingStats(timingErrorsRef.current));
     const result: GameResult = {
       score: scoreRef.current,
       maxCombo: maxComboRef.current,
@@ -601,6 +629,7 @@ export default function GameScreen({
       stageId,
       dogezaHits,
       points,
+      timing,
       ending: computeEnding(grade, allPerfect, lang),
     };
     setPhase("done");

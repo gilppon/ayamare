@@ -16,7 +16,7 @@ npm run build        # 타입체크 + 프로덕션 빌드 (PWA)
 npm run preview      # 빌드 미리보기
 npm run typecheck    # tsc --noEmit (앱 + E2E + vitest 설정)
 npm run lint         # eslint (경고 0 tolerated — --max-warnings 0)
-npm run test         # vitest (413 케이스, jsdom)
+npm run test         # vitest (449 케이스, jsdom)
 npm run test:coverage# 커버리지 게이트 포함 실행
 npm run verify       # typecheck + lint + test
 npm run test:e2e     # Playwright (Chromium)
@@ -50,6 +50,10 @@ npm run test:perf    # 성능 프로브 (측정값 단정 없음 — 구조 불�
 - **일시정지**: `AudioContext.suspend()` 로 곡 타임라인을 보존한 채 멈춘다.
 - **신기록 판정**: 결과 화면은 갱신 **후** 최고점이 아니라 갱신 **전** 값으로 비교한다
   (`progressStore.lastRunNewRecord`). 최고점과 동점이면 신기록이 아니다.
+- **오디오 지연 보정**: 블루투스 헤드폰은 120~250ms 늦게 소리를 들려준다.
+  보정값은 **판정에만** 적용한다 (노트 위치는 실제 오디오를 따른다).
+  결과 화면의 타이밍 히스토그램이 평균 오차를 보여주고, 표본이 충분하면
+  추천 오프셋을 원클릭으로 적용한다.
 
 ## 진행 문서
 

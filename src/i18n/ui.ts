@@ -173,6 +173,17 @@ const ko = {
   "res.stage": "스테이지",
   "res.judgment": "판정",
   "res.dogezaMaster": "도게자 마스터",
+  "res.timing": "타이밍 분석",
+  "res.timingCount": "{n}타 표본",
+  "res.timingEarly": "빠름",
+  "res.timingOnbeat": "정확",
+  "res.timingLate": "늦음",
+  "res.timingMean": "평균 오차",
+  "res.timingSuggest": "오디오 지연 보정 {v}ms 를 권장합니다",
+  "res.timingApply": "적용하기",
+  "res.timingLowConfidence": "타수가 적거나 편차가 커 아직 보정을 권장하지 않습니다.",
+  "settings.offset": "오디오 지연 보정",
+  "settings.offsetHint": "블루투스 헤드폰은 100ms 이상 늦게 들립니다",
 };
 
 export type UIKey = keyof typeof ko;
@@ -332,6 +343,17 @@ const en: Record<UIKey, string> = {
   "res.stage": "Stage",
   "res.judgment": "Judgment",
   "res.dogezaMaster": "Dogeza Master",
+  "res.timing": "Timing analysis",
+  "res.timingCount": "{n} hits sampled",
+  "res.timingEarly": "Early",
+  "res.timingOnbeat": "On beat",
+  "res.timingLate": "Late",
+  "res.timingMean": "Mean offset",
+  "res.timingSuggest": "An audio offset of {v}ms is recommended",
+  "res.timingApply": "Apply",
+  "res.timingLowConfidence": "Too few hits or too much spread — no recommendation yet.",
+  "settings.offset": "Audio offset",
+  "settings.offsetHint": "Bluetooth headphones run 100ms+ late",
 };
 
 const ja: Record<UIKey, string> = {
@@ -489,6 +511,17 @@ const ja: Record<UIKey, string> = {
   "res.stage": "ステージ",
   "res.judgment": "判定",
   "res.dogezaMaster": "ドゲザマスター",
+  "res.timing": "タイミング分析",
+  "res.timingCount": "{n} ノーツのサンプル",
+  "res.timingEarly": "早い",
+  "res.timingOnbeat": "正確",
+  "res.timingLate": "遅い",
+  "res.timingMean": "平均オフセット",
+  "res.timingSuggest": "オフセット {v}ms の補正を推奨します",
+  "res.timingApply": "適用する",
+  "res.timingLowConfidence": "サンプルが少ないかばらつきが大きいため、まだ推奨しません。",
+  "settings.offset": "オーディオ遅延補正",
+  "settings.offsetHint": "Bluetoothヘッドセットは100ms以上遅れます",
 };
 
 const DICT: Record<Lang, Record<UIKey, string>> = { ko, en, ja };

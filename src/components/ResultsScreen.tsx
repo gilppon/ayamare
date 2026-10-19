@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GRADE_COLORS, JUDGMENTS, stageLabelFor } from "@/game/constants";
 import { MISSIONS, missionText } from "@/game/missions";
-import type { GameResult, Judgment, JudgmentCounts } from "@/game/types";
+import { BUCKET_COUNT, bucketHeights } from "@/game/timing";
+import type { GameResult, Judgment, JudgmentCounts, TimingStats } from "@/game/types";
 import { tr, type Lang } from "@/i18n/ui";
 import { useMetaStore } from "@/stores/metaStore";
 import { useProgressStore } from "@/stores/progressStore";
@@ -204,6 +205,8 @@ export default function ResultsScreen({
           </div>
         )}
 
+        <TimingPanel stats={result.timing} />
+
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <button
             onClick={onRetry}
@@ -254,6 +257,93 @@ export default function ResultsScreen({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * A — 타이밍 히스토그램 & 지연 보정 가이드.
+ *
+ * "PERFECT 가 안 나온다" 는 사실만으로는 원인을 알 수 없다.
+ * 블루투스 헤드폰은 120~250ms 늦게 소리를 들려준다. 이 패널은
+ * **지금 이 플레이어가 얼마나 빠른지/늦은지** 를 눈으로 보여주고,
+ * 그에 맞는 오프셋을 원클릭으로 적용하게 한다.
+ *
+ * 표본이 적거나 산포가 크면 자동 적용을 막는다 — 3타를 보고 확신하는 것은 위험하다.
+ */
+function TimingPanel({ stats }: { stats: TimingStats | undefined }) {
+  const lang = useSettingsStore((s) => s.lang);
+  const setAudioOffset = useSettingsStore((s) => s.setAudioOffset);
+  if (!stats || stats.count === 0) return null;
+
+  const heights = bucketHeights(stats.buckets);
+  const late = stats.meanMs > 12;
+  const early = stats.meanMs < -12;
+
+  return (
+    <div className="mt-4 w-full rounded-xl border border-white/10 bg-slate-900/60 px-4 py-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+          {tr(lang, "res.timing")}
+        </span>
+        <span className="text-[10px] text-slate-500">
+          {tr(lang, "res.timingCount", { n: stats.count })}
+        </span>
+      </div>
+
+      {/* 히스토그램 — 중앙선(0ms)이 정답이다 */}
+      <div className="flex h-20 items-end gap-[2px]" role="img" aria-label={tr(lang, "res.timing")}>
+        {heights.map((h, i) => {
+          const isCenter = i === Math.floor(BUCKET_COUNT / 2);
+          return (
+            <div
+              key={i}
+              className="flex-1 rounded-t-sm"
+              style={{
+                height: `${Math.max(2, h * 100)}%`,
+                backgroundColor: isCenter ? "#fbbf24" : h > 0 ? "#475569" : "#1e293b",
+              }}
+            />
+          );
+        })}
+      </div>
+      <div className="mt-1 flex justify-between text-[9px] text-slate-600">
+        <span>{tr(lang, "res.timingEarly")}</span>
+        <span>{tr(lang, "res.timingOnbeat")}</span>
+        <span>{tr(lang, "res.timingLate")}</span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-xs">
+        <span className="text-slate-400">
+          {tr(lang, "res.timingMean")}{" "}
+          <b className={late ? "text-rose-300" : early ? "text-sky-300" : "text-emerald-300"}>
+            {stats.meanMs > 0 ? "+" : ""}
+            {stats.meanMs.toFixed(0)}ms
+          </b>
+        </span>
+        <span className="text-slate-500">±{stats.stdDevMs.toFixed(0)}ms</span>
+      </div>
+
+      {/* 추천 오프셋 원클릭 적용 */}
+      {stats.suggestedOffsetMs !== 0 && (
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+          {stats.suggestionReliable ? (
+            <>
+              <span className="text-[11px] text-slate-400">
+                {tr(lang, "res.timingSuggest", { v: stats.suggestedOffsetMs })}
+              </span>
+              <button
+                onClick={() => setAudioOffset(stats.suggestedOffsetMs)}
+                className="rounded-full border border-amber-300/40 bg-amber-400/10 px-4 py-1.5 font-display text-amber-200 transition hover:bg-amber-400/20"
+              >
+                {tr(lang, "res.timingApply")}
+              </button>
+            </>
+          ) : (
+            <span className="text-[11px] text-slate-500">{tr(lang, "res.timingLowConfidence")}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
