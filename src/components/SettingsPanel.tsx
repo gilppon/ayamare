@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { LANES, LANE_NAMES } from "@/game/constants";
+import { useEffect, useRef, useState } from "react";
+import { LANES, LANE_NAMES, isBindableKey } from "@/game/constants";
 import { LANGS, tr } from "@/i18n/ui";
 import { DEFAULT_KEYS, useSettingsStore } from "@/stores/settingsStore";
 
@@ -8,6 +8,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   const setTimingScale = useSettingsStore((s) => s.setTimingScale);
   const reduceMotion = useSettingsStore((s) => s.reduceMotion);
   const setReduceMotion = useSettingsStore((s) => s.setReduceMotion);
+  const setReduceMotionUserSet = useSettingsStore((s) => s.setReduceMotionUserSet);
   const colorblind = useSettingsStore((s) => s.colorblind);
   const setColorblind = useSettingsStore((s) => s.setColorblind);
   const haptics = useSettingsStore((s) => s.haptics);
@@ -21,6 +22,20 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   const setVoice = useSettingsStore((s) => s.setVoice);
 
   const [rebindLane, setRebindLane] = useState<number | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // M-09: 모달이 Escape 로 닫히고 포커스가 안으로 들어오게 한다.
+  useEffect(() => {
+    panelRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
 
   const laneKeyLabel = (lane: number) => {
     for (const [k, v] of Object.entries(keyMap)) {
@@ -35,7 +50,12 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 p-6"
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label={tr(lang, "settings.title")}
+        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 p-6 outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
@@ -83,7 +103,15 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
             />
           </label>
 
-          <Toggle label={tr(lang, "settings.motion")} value={reduceMotion} onChange={setReduceMotion} />
+          <Toggle
+            label={tr(lang, "settings.motion")}
+            value={reduceMotion}
+            onChange={(v) => {
+              // OS 의 prefers-reduced-motion 을 더 이상 따르지 않는다
+              setReduceMotionUserSet(true);
+              setReduceMotion(v);
+            }}
+          />
           <Toggle label={tr(lang, "settings.colorblind")} value={colorblind} onChange={setColorblind} />
           <Toggle label={tr(lang, "settings.haptics")} value={haptics} onChange={setHaptics} />
           <Toggle label={tr(lang, "settings.voice")} value={voice} onChange={setVoice} />
@@ -119,16 +147,18 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
             {rebindLane !== null && (
               <input
                 autoFocus
-                placeholder=""
+                value=""
+                readOnly
+                aria-label={tr(lang, "settings.pressKey")}
                 className="mt-2 w-full rounded border border-amber-300/40 bg-black/40 px-2 py-1 text-xs text-amber-200 outline-none"
                 onKeyDown={(e) => {
                   e.preventDefault();
-                  const k = e.key === " " ? " " : e.key.toLowerCase();
-                  if (k === "escape") {
+                  if (e.key === "Escape") {
                     setRebindLane(null);
                     return;
                   }
-                  if (k === "tab") return;
+                  if (!isBindableKey(e.key)) return;
+                  const k = e.key === " " ? " " : e.key.toLowerCase();
                   setKeyBinding(k, rebindLane);
                   setRebindLane(null);
                 }}

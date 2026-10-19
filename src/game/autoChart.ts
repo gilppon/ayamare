@@ -41,13 +41,19 @@ export function peaksToChart(
     en: "Custom stage! The chat is watching!",
     ja: "カスタムステージです！チャットが見ています！",
   };
+  /** 언어별 초안 제목 (lang 를 무시하면 영어/일본어 사용자에게 한국어가 노출된다) */
+const titles: Record<Lang, string> = {
+    ko: "CUSTOM — 자동채보 초안",
+    en: "CUSTOM — auto-chart draft",
+    ja: "CUSTOM — 自動採譜の草案",
+  };
   const subtitles: Record<Lang, string> = {
     ko: "오디오 분석으로 생성된 초안 (에디터에서 다듬기)",
     en: "Draft from audio analysis (polish in the editor)",
     ja: "音声解析で生成した草案（エディタで調整）",
   };
   return {
-    title: opts.title ?? "CUSTOM — 자동채보 초안",
+    title: opts.title ?? titles[lang],
     subtitle: subtitles[lang],
     bpm,
     notes,
@@ -71,18 +77,25 @@ export function detectPeaks(
   const energies: number[] = [];
 
   for (let i = 0; i + windowSize < channelData.length; i += hopSize) {
+    // B-12: 창마다 시작 위상(phase)을 돌려가며 샘플링한다.
+    // hopSize(512)가 4의 배수라 `j += 4` 만 쓰면 모든 창이 같은 나머지 인덱스만
+    // 보게 되고, 4로 나누어떨어지지 않는 위치의 트랜지언트가 통째로 누락된다.
+    const phase = ((i / hopSize) | 0) % 4;
     let sum = 0;
-    for (let j = i; j < i + windowSize; j += 4) {
+    let n = 0;
+    for (let j = i + phase; j < i + windowSize; j += 4) {
       const v = channelData[j];
       sum += v * v;
+      n++;
     }
-    energies.push(sum / (windowSize / 4));
+    energies.push(sum / Math.max(1, n));
   }
 
   const mean = energies.reduce((a, b) => a + b, 0) / Math.max(1, energies.length);
   const threshold = mean * (opts.thresholdRatio ?? 1.8);
   const peaks: number[] = [];
   for (let i = 1; i < energies.length - 1; i++) {
+    // 국소 최대 + 임계 초과만 통과 (평탄 구간도 1개만 기록)
     if (energies[i] > threshold && energies[i] >= energies[i - 1] && energies[i] > energies[i + 1]) {
       peaks.push((i * hopSize) / sampleRate);
       if (peaks.length >= maxPeaks) break;

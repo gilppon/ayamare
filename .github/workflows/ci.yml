@@ -1,0 +1,141 @@
+﻿name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # 매주 월요일 04:17 UTC — 성능 drift 추적. PR 을 막지 않기 위해
+    # perf 잡만 별도로 돌리고 실패해도 전체 워크플로에는 영향이 없다.
+    - cron: "17 4 * * 1"
+
+# 최소 권한 — 워크플로가 읽기/아티팩트 쓰기 외 권한을 갖지 않도록 한다.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: typecheck · lint · unit · coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+
+      # 커버리지 게이트는 vitest.config.ts 의 thresholds 로 강제된다.
+      # 로컬 `npm run verify` 를 느리게 하지 않고 CI 에서만 돌린다.
+      - name: Coverage gate
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  e2e:
+    name: e2e (chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Upload traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  build:
+    name: production build
+    runs-on: ubuntu-latest
+    needs: verify
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      # 번들이 무한정 커지는 것을 막는다 (단일 HTML 인라인 빌드라 특히 중요).
+      # 현재 기준 약 420KB — 600KB 를 넘으면 경고로 끊는다.
+      - name: Bundle size budget
+        run: |
+          SIZE=$(stat -c%s dist/index.html)
+          echo "dist/index.html = $((SIZE / 1024)) KiB"
+          if [ "$SIZE" -gt 614400 ]; then
+            echo "::error::번들이 600KiB 를 초과했다 ($((SIZE / 1024)) KiB)"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  perf:
+    name: perf probe (weekly)
+    # PR 검증과 분리 — 측정값은 머신에 좌우되므로 결과를 **수집**할 뿐
+    # 실패해도 파이프라인을 막지 않는다.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run perf probe
+        run: PERF_OUT=perf-baseline.json npm run test:perf
+      - name: Upload perf baseline
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-baseline
+          path: perf-baseline.json
+          retention-days: 90
+
+
+      # 의도적으로 자동 비교를 두지 않는다.
+      # 이 프로젝트의 jsdom 타이머 환경에서는 실측값이 재현되지 않아
+      # (state.md 35.4 "비율조차 단정 대상이 아니다") 임계 비교는 노이즈만 만든다.
+      # 프로브는 구조 불변식만 검증하고, drift 판단은 사람이 state.md 와 대조한다.

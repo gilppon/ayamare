@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { ANGER_STEPS, angerColor, angerPips } from "@/game/constants";
 import { tr } from "@/i18n/ui";
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { SnsItem } from "@/game/types";
@@ -65,14 +66,8 @@ interface AngerMeterProps {
 export const AngerMeter = memo(function AngerMeter({ anger }: AngerMeterProps) {
   const lang = useSettingsStore((s) => s.lang);
   const clamped = Math.max(0, Math.min(100, anger));
-  const color =
-    clamped >= 80
-      ? "#f43f5e"
-      : clamped >= 55
-      ? "#fb923c"
-      : clamped >= 30
-      ? "#facc15"
-      : "#34d399";
+  const color = angerColor(clamped);
+  const filled = angerPips(clamped);
 
   return (
     <div className="w-44 rounded-2xl border border-white/10 bg-slate-900/80 p-3 backdrop-blur">
@@ -80,12 +75,30 @@ export const AngerMeter = memo(function AngerMeter({ anger }: AngerMeterProps) {
         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
           {tr(lang, "hud.anger")}
         </span>
-        <span className="text-sm">
-          {"🔥".repeat(clamped >= 80 ? 5 : clamped >= 60 ? 4 : clamped >= 40 ? 3 : clamped >= 20 ? 2 : 1)}
+        {/* I-09: 이모지 반복 → 고정된 디스크리트 pip.
+            OS/이모지 폰트에 따라 렌더 편차가 크고 색맹에선 구분되지 않는다. */}
+        <span className="flex items-center gap-0.5" aria-hidden="true">
+          {Array.from({ length: ANGER_STEPS }, (_, i) => (
+            <span
+              key={i}
+              className="h-2 w-2 rounded-full transition-colors duration-200"
+              style={{
+                backgroundColor: i < filled ? color : "rgba(255,255,255,0.14)",
+                boxShadow: i < filled ? `0 0 6px ${color}` : "none",
+              }}
+            />
+          ))}
         </span>
       </div>
       <div className="mt-2 flex items-center gap-2">
-        <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-800">
+        <div
+          className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-800"
+          role="meter"
+          aria-valuenow={Math.round(clamped)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={tr(lang, "hud.anger")}
+        >
           <div
             className="h-full rounded-full transition-all duration-200"
             style={{ width: `${clamped}%`, backgroundColor: color }}
@@ -116,7 +129,7 @@ export const SnsFeed = memo(function SnsFeed({ items }: SnsFeedProps) {
     <div className="flex w-60 flex-col gap-2">
       <div className="flex items-center gap-2 px-1">
         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-          Live SNS
+          {tr(lang, "hud.live")}
         </span>
         <span className="rounded-full bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-bold text-rose-300">
           {tr(lang, "hud.tag")}

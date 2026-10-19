@@ -58,14 +58,6 @@ export function comboMultiplier(combo: number): number {
   return 1 + (Math.min(combo, 50) / 50) * 0.5;
 }
 
-export function scoreFor(
-  _judgment: Judgment,
-  combo: number,
-  base: number
-): number {
-  return Math.round(base * comboMultiplier(combo));
-}
-
 export function calculateAccuracy(
   counts: JudgmentCounts,
   total: number

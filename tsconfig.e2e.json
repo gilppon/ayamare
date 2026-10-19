@@ -1,0 +1,21 @@
+{
+  "//": "E2E 는 별도 tsconfig 를 쓴다 — Playwright 는 자체 러너(transform)로 컴파일하므로",
+  "//2": "app tsconfig 의 vitest 전역 조정은 필요 없고, DOM lib 는 그대로 필요하다.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["node"]
+  },
+  "include": ["e2e", "playwright.config.ts"]
+}

@@ -70,6 +70,13 @@ export interface GameResult {
   score: number;
   maxCombo: number;
   counts: JudgmentCounts;
+  /**
+   * 홀드 노트 "릴리즈" 판정 집계. 탭 판정(counts)과 분리해 두어
+   * accuracy 분모(= 탭 노트 수 = notes.length) 불변식을 깨지 않는다. (B-08)
+   */
+  releaseCounts?: JudgmentCounts;
+  /** 강제 해제(타임아웃)로 종료된 홀드 수. 놓친 손똉이 지표. (B-01) */
+  forcedReleases?: number;
   accuracy: number;
   grade: string;
   allPerfect: boolean;

@@ -20,6 +20,7 @@ export const MISSIONS: MissionDef[] = [
   { id: "perfect100", name: "완벽주의", desc: "PERFECT 누적 100개", target: 100, reward: 400, kind: "totalPerfect" },
   { id: "acc90", name: "진심 전달", desc: "단일 런 정확도 90%+", target: 0.9, reward: 350, kind: "bestAccuracy" },
   { id: "daily1", name: "일간 속죄", desc: "데일리 챌린지 1회 완주", target: 1, reward: 300, kind: "dailyRuns" },
+  { id: "runAllPerfect", name: "흠 없는 사죄", desc: "단일 런에서 PERFECT 30개", target: 30, reward: 500, kind: "singlePerfect" },
 ];
 
 const MISSION_TEXT_OVERRIDE: Record<"en" | "ja", Record<string, { name: string; desc: string }>> = {
@@ -32,6 +33,7 @@ const MISSION_TEXT_OVERRIDE: Record<"en" | "ja", Record<string, { name: string; 
     perfect100: { name: "Perfectionist", desc: "100 total PERFECTs" },
     acc90: { name: "Sincerity Delivered", desc: "90%+ accuracy in one run" },
     daily1: { name: "Daily Atonement", desc: "Clear a daily challenge" },
+    runAllPerfect: { name: "Flawless", desc: "30 PERFECTs in a single run" },
   },
   ja: {
     play3: { name: "初出勤", desc: "累計3プレイ" },
@@ -42,6 +44,7 @@ const MISSION_TEXT_OVERRIDE: Record<"en" | "ja", Record<string, { name: string; 
     perfect100: { name: "完璧主義", desc: "PERFECT累計100個" },
     acc90: { name: "真心伝達", desc: "単一プレイ精度90%+" },
     daily1: { name: "日課の贖罪", desc: "デイリーチャレンジ1回完走" },
+    runAllPerfect: { name: "完璧な謝罪", desc: "単一プレイでPERFECT 30個" },
   },
 };
 

@@ -48,7 +48,7 @@ describe("i18n completeness", () => {
       expect(randomSns("positive", lang).text.length).toBeGreaterThan(0);
       expect(tauntForMiss(INITIAL_PRESS_CONTEXT, 0, lang).length).toBeGreaterThan(0);
       expect(praiseForHit(INITIAL_PRESS_CONTEXT, 0, lang).length).toBeGreaterThan(0);
-      expect(intensifyQuestion("Q?", { ...INITIAL_PRESS_CONTEXT, missStreak: 3 }, 0, lang).length).toBeGreaterThan(2);
+      expect(intensifyQuestion("Q?", { ...INITIAL_PRESS_CONTEXT, judged: 12, missStreak: 3 }, 0, lang).length).toBeGreaterThan(2);
     }
   });
 

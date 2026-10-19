@@ -52,8 +52,29 @@ interface ProgressState extends ProgressSnapshot {
   }>;
   /** 스테이지별 베스트 */
   bestByStage: Record<string, { score: number; accuracy: number; grade: string }>;
+  /**
+   * 방금 기록한 런이 **갱신 전** 최고점을 실제로 넘었는가.
+   *
+   * 결과 화면이 `bestByStage` 를 비교하면 갱신 *후* 값만 보게 되어,
+   * 최고점과 **동점**이어도 "신기록" 으로 표시된다. 비교의 기준이 되는
+   * "갱신 전 값" 은 여기서만 존재하므로 기록 시점에 판정해 둔다.
+   */
+  lastRunNewRecord: boolean;
   recordRun: (result: GameResult, stageId: string) => string[];
   claim: (missionId: string) => number;
+}
+
+/**
+ * 스테이지 식별자 정규화.
+ *
+ * daily 런은 `daily:2026-10-19` 같은 날짜 키로 저장되므로,
+ * 정규화하지 않으면 `bestByStage` 에 날짜마다 항목이 하나씩 쌓이고
+ * 기록 탭이 내부 ID로 뒤덮인다. 베스트 집계는 날짜와 무관한 "daily" 로 묶는다.
+ */
+export function baseStageOf(stageId: string): string {
+  if (stageId.startsWith("custom:")) return "custom";
+  if (stageId.startsWith("daily:")) return "daily";
+  return stageId;
 }
 
 const initialSnapshot: ProgressSnapshot = {
@@ -76,6 +97,7 @@ export const useProgressStore = create<ProgressState>()(
       lastNewlyCompleted: [],
       runHistory: [],
       bestByStage: {},
+      lastRunNewRecord: false,
       recordRun: (result, stageId) => {
         const prev = get();
         const prevSnapshot: ProgressSnapshot = {
@@ -110,10 +132,11 @@ export const useProgressStore = create<ProgressState>()(
           if (!wasComplete && isMissionComplete(m, next)) newly.push(m.id);
         }
 
-        const baseStage = stageId.startsWith("custom:") ? "custom" : stageId;
+        const baseStage = baseStageOf(stageId);
         const prevBest = prev.bestByStage[baseStage];
+        const isNewRecord = !prevBest || result.score > prevBest.score;
         const bestByStage = { ...prev.bestByStage };
-        if (!prevBest || result.score > prevBest.score) {
+        if (isNewRecord) {
           bestByStage[baseStage] = {
             score: result.score,
             accuracy: result.accuracy,
@@ -139,6 +162,7 @@ export const useProgressStore = create<ProgressState>()(
           lastNewlyCompleted: newly,
           runHistory,
           bestByStage,
+          lastRunNewRecord: isNewRecord,
         });
         return newly;
       },

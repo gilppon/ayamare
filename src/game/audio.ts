@@ -56,6 +56,15 @@ export function offsetForStage(stageId: string): number {
   return TRACK_OFFSETS[baseOfStage(stageId)] ?? 0;
 }
 
+/**
+ * 곡 시작 전 선행 시간(초).
+ *
+ * 오디오를 예약한 뒤 첫 마디가 채보 0초와 어긋나지 않도록
+ * 약간의 여유를 지정하기 위해서다. 통합 테스트도 곡 시각을
+ * 계산할 때 이 값을 상수로 쓴다 (같은 값을 양쪽이 공유해야 한다).
+ */
+export const SONG_PREROLL_SEC = 0.12;
+
 const MAX_BARS = 64;
 
 export class AudioEngine {
@@ -70,6 +79,8 @@ export class AudioEngine {
   private trackBuffer: AudioBuffer | null = null;
   private hasTrack = false;
   private duckFilter: BiquadFilterNode | null = null;
+  /** A-01: 타격 SFX + 음성이 겹칠 때 클리핑을 막는 버스터 */
+  private limiter: DynamicsCompressorNode | null = null;
   private noise: AudioBuffer | null = null;
   private bpm: number;
   private trackUrl: string | null;
@@ -79,6 +90,11 @@ export class AudioEngine {
   private nextBarTime = 0;
   private stopped = false;
   private intensity = 0;
+  /** B-03: MAX_BARS 소진 후 crash() 는 1회만. 미가드면 25ms마다 호출되어
+   * AudioNode가 초당 40개씩 생성되어 폭발한다. */
+  private crashed = false;
+  /** 덕킹 후 복원할 베이스 게인 */
+  private readonly masterLevel = 0.85;
   songStart = 0;
 
   constructor(bpm: number, trackUrl: string | null = null, trackOffset = 0) {
@@ -100,13 +116,21 @@ export class AudioEngine {
     const ctx = new Ctor();
     this.ctx = ctx;
     this.master = ctx.createGain();
-    this.master.gain.value = 0.85;
+    this.master.gain.value = this.masterLevel;
     // MISS 덕킹용 로우패스 (평상시 20kHz = bypass)
     this.duckFilter = ctx.createBiquadFilter();
     this.duckFilter.type = "lowpass";
     this.duckFilter.frequency.value = 20000;
     this.duckFilter.connect(this.master);
-    this.master.connect(ctx.destination);
+    // A-01: 사죄 음성(gain 1.25) + 타격 SFX가 겹치는 구간에서 클리핑 방지
+    this.limiter = ctx.createDynamicsCompressor();
+    this.limiter.threshold.value = -6;
+    this.limiter.knee.value = 6;
+    this.limiter.ratio.value = 12;
+    this.limiter.attack.value = 0.003;
+    this.limiter.release.value = 0.15;
+    this.limiter.connect(ctx.destination);
+    this.master.connect(this.limiter);
 
     this.drumBus = ctx.createGain();
     this.drumBus.gain.value = 0.8;
@@ -132,13 +156,23 @@ export class AudioEngine {
     // 트랙 로드 (실패하면 절차 그루브로 폴백)
     await this.loadTrack();
 
-    this.songStart = ctx.currentTime + 0.12;
+    this.songStart = ctx.currentTime + SONG_PREROLL_SEC;
     this.nextBarIndex = 0;
     this.nextBarTime = this.songStart;
     this.stopped = false;
+    this.crashed = false;
     this.intensity = 0;
 
-    if (this.hasTrack) {
+    // B-15: offset 이 곡 길이 이상이면 `loopStart >= loopEnd` 가 되고,
+    // 브라우저는 이 조합에서 루프를 재생하지 않아 트랙이 통째로 무음이 된다.
+    // offset 이 곡을 벗어난 경우는 "사용 가능한 트랙 없음"으로 보고
+    // 절차 그루브로 되돌린다 (버스 뮤트도 함께 해제).
+    if (this.hasTrack && this.trackBuffer && this.trackOffset >= this.trackBuffer.duration) {
+      this.hasTrack = false;
+      this.trackBuffer = null;
+    }
+
+    if (this.hasTrack && this.trackBuffer) {
       // 트랙 모드: 절차 그루브 뮤트, 베이스 루프만 재생.
       // 파일 내 첫 박 위치(offset)부터 시작해 차트 박자와 일치시킨다.
       this.drumBus.gain.value = 0;
@@ -149,7 +183,7 @@ export class AudioEngine {
       src.buffer = this.trackBuffer;
       src.loop = true;
       src.loopStart = offset;
-      src.loopEnd = this.trackBuffer!.duration;
+      src.loopEnd = this.trackBuffer.duration;
       src.connect(this.musicBus);
       src.start(this.songStart, offset);
       this.trackSource = src;
@@ -214,6 +248,29 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * U-01 일시정지. `ctx.suspend()` 는 `ctx.currentTime` 진행을 멈추므로
+   * 컨텍스트를 재생성하지 않고 곡 타임라인을 그대로 보존할 수 있다.
+   * (AudioBufferSourceNode 를 끊었다 이어붙이면 위치 추적이 깨진다)
+   */
+  async pause(): Promise<void> {
+    if (!this.ctx || this.ctx.state !== "running") return;
+    try {
+      await this.ctx.suspend();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async resume(): Promise<void> {
+    if (!this.ctx || this.ctx.state !== "suspended") return;
+    try {
+      await this.ctx.resume();
+    } catch {
+      /* ignore */
+    }
+  }
+
   stop(): void {
     this.stopped = true;
     if (this.schedulerId !== null) {
@@ -238,6 +295,7 @@ export class AudioEngine {
       this.sfxBus = null;
       this.musicBus = null;
       this.duckFilter = null;
+      this.limiter = null;
     }
   }
 
@@ -261,7 +319,11 @@ export class AudioEngine {
     this.arpBus?.gain.setTargetAtTime(arp, t, 0.4);
   }
 
-  /** MISS/BAD 시 음악을 잠깐 눌러주는 덕킹. */
+  /**
+   * MISS/BAD 시 음악을 잠깐 눌러주는 덕킹.
+   * 저역만 남기는 로우패스 + 게인 감소 조합. 저역만 남기면 킥/베이스가 오히려
+   * 살아남아 "먹먹해지는" 인상을 주므로 게인도 함께 낮춘다.
+   */
   duck(amount = 0.35): void {
     if (!this.ctx || !this.duckFilter) return;
     const t = this.ctx.currentTime;
@@ -270,6 +332,13 @@ export class AudioEngine {
     f.setValueAtTime(20000, t);
     f.exponentialRampToValueAtTime(500, t + 0.02);
     f.exponentialRampToValueAtTime(20000, t + amount);
+    if (this.master) {
+      const g = this.master.gain;
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(g.value, t);
+      g.linearRampToValueAtTime(this.masterLevel * (1 - amount * 0.6), t + 0.02);
+      g.linearRampToValueAtTime(this.masterLevel, t + amount);
+    }
   }
 
   /** 타격 SFX. 콤보가 오를수록 PERFECT 음높이 상승. */
@@ -307,7 +376,10 @@ export class AudioEngine {
       this.nextBarTime += barDur;
       this.nextBarIndex++;
     }
-    if (this.nextBarIndex >= MAX_BARS) {
+    // B-03: 다음 while 은 이미 종료된 상태라 매 틱마다 이 분기에 도달한다.
+    // 무조건 crash()를 호출하면 AudioNode가 초당 40개씩 생성되어 폭발하므로 1회만.
+    if (this.nextBarIndex >= MAX_BARS && !this.crashed) {
+      this.crashed = true;
       this.crash(this.nextBarTime - barDur + 3.5);
     }
   }

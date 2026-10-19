@@ -280,6 +280,17 @@ body {
   animation: flash-storm-anim 0.3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+@keyframes solid-ring-fade {
+  0% {
+    opacity: 1;
+    transform: scaleY(1.6);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleY(1);
+  }
+}
+
 @keyframes shockwave {
   0% {
     transform: translate(-50%, -50%) scale(0.6);

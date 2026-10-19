@@ -76,7 +76,3 @@ export async function ensureVoiceBank(): Promise<void> {
     /* ignore */
   }
 }
-
-export function voiceBankSize(): number {
-  return syncCache.size;
-}

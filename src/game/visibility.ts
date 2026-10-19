@@ -10,6 +10,39 @@ export const DESPAWN_BEHIND = 0.6;
 export type NoteVisualState = "pending" | "hit" | "miss" | "holding";
 
 /**
+ * 현재 화면에 보일 가능성이 있는 노트의 **인덱스 윈도우**를 이진 탐색으로 찾는다.
+ *
+ * P-01: 매 프레임 `chart.notes.filter()` 전체 순회는 O(N)이었다.
+ * 노트가 time 오름차순으로 정렬되어 있다는 불변식을 이용하면
+ * [now - DESPAWN_BEHIND, now + SPAWN_AHEAD] 구간만 훑어도 된다.
+ * 150BPM stage5(≈200노트) 기준 프레임당 연산량이 크게 준다.
+ */
+export function visibleNoteWindow(
+  notes: Note[],
+  now: number
+): { start: number; end: number } {
+  const lo = now - DESPAWN_BEHIND;
+  const hi = now + SPAWN_AHEAD;
+  // upperBound(time <= x)
+  let s = 0;
+  let e = notes.length;
+  while (s < e) {
+    const m = (s + e) >> 1;
+    if (notes[m].time <= lo) s = m + 1;
+    else e = m;
+  }
+  const start = s;
+  s = start;
+  e = notes.length;
+  while (s < e) {
+    const m = (s + e) >> 1;
+    if (notes[m].time < hi) s = m + 1;
+    else e = m;
+  }
+  return { start, end: s };
+}
+
+/**
  * 노트가 레인에 그려져야 하는지 판정 (순수함수).
  * - hit(타격 성공)만 즉시 소멸. miss는 바닥으로 흘러가게 유지.
  * - 스폰~소멸 사이에는 상태와 무관하게 항상 true → 중간 소멸 없음.
@@ -47,3 +80,33 @@ export function selectPressTarget(
   }
   return best;
 }
+
+/**
+ * `speedUp` 기믹의 낙하 곡선 지수.
+ *
+ * B-02: 기존 값 `1.6` 은 0<d<1 에서 `d`보다 **작아서** 판정선 직전 오히려
+ * 감속(거의 정지)했다 — "가속"이라는 이름과 정반대 UX.
+ * `0.55` 로 뒤집어 마지막 1초가 정방향으로 빨라지는 오목 곡선이 되게 한다.
+ */
+export const SPEEDUP_EXPONENT = 0.55;
+
+/** 노트의 화면 Y 좌표 (레인 상단 기준 px). 순수함수 — 렌더와 동일 규칙을 공유한다. */
+export function noteFallY(
+  noteTime: number,
+  now: number,
+  hitLineY: number,
+  speed: number
+): number {
+  const d = noteTime - now;
+  if (d >= 1) return hitLineY - d * speed;
+  return hitLineY - Math.pow(Math.max(0, d), SPEEDUP_EXPONENT) * speed;
+}
+
+/**
+ * `speedUp` 노트가 마지막 1초에 **등속 이상으로 접근하는지** 검증용.
+ * (d=1 에서 남은 거리가 speed, d→0 에서 0 으로 수렴해야 정상)
+ */
+export function speedUpRemainingRatio(d: number): number {
+  return Math.pow(Math.max(0, d), SPEEDUP_EXPONENT);
+}
+

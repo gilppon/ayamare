@@ -1,4 +1,3 @@
-import type { JournalistType } from "./types";
 import type { Lang } from "@/i18n/ui";
 
 export interface PressContext {
@@ -10,7 +9,16 @@ export interface PressContext {
   accuracy: number;
   questionIndex: number;
   dogezaHits: number;
+  /**
+   * 지금까지 판정된 노트 수. 표본 수.
+   * 이게 없으면 accuracy 가 1(=미플레이) 로서 "기세가 좋으시네요" 꼬리가
+   * 매 런 첫 질문부터 붙는다.
+   */
+  judged: number;
 }
+
+/** 호평 꼬리를 붙이기 위한 최소 표본 수 */
+export const PRAISE_MIN_SAMPLE = 8;
 
 export const INITIAL_PRESS_CONTEXT: PressContext = {
   combo: 0,
@@ -21,6 +29,7 @@ export const INITIAL_PRESS_CONTEXT: PressContext = {
   accuracy: 1,
   questionIndex: 0,
   dogezaHits: 0,
+  judged: 0,
 };
 
 const MISS_TAUNTS: Record<string, string[]> = {
@@ -195,6 +204,8 @@ export function praiseForHit(ctx: PressContext, seed = 0, lang: Lang = "ko"): st
 /** 정해진 질문에 상황별 꼬리 추가 (원문 보존 + 한 줄 덧씌우기) */
 export function intensifyQuestion(baseText: string, ctx: PressContext, seed = 0, lang: Lang = "ko"): string {
   const p = pools(lang);
+  // 표본이 부족할 때는 칭찬/추궁 어느 쪽도 근거가 없다 → 원문 유지
+  if (ctx.judged < PRAISE_MIN_SAMPLE) return baseText;
   if (ctx.combo >= 20 || ctx.accuracy >= 0.9) {
     return baseText + pick(p?.softeners ?? QUESTION_SOFTENERS, seed);
   }
@@ -202,19 +213,4 @@ export function intensifyQuestion(baseText: string, ctx: PressContext, seed = 0,
     return baseText + pick(p?.intensifiers ?? QUESTION_INTENSIFIERS, seed + ctx.missStreak);
   }
   return baseText;
-}
-
-export interface DynamicQuestion {
-  journalist: JournalistType;
-  text: string;
-}
-
-/** 다음 질문자/수위 예고 (DDA와 별개로 분노·콤보 기반 캐스팅) */
-export function castNextQuestion(ctx: PressContext, questionIndex: number): JournalistType {
-  if (ctx.anger >= 75 || ctx.missStreak >= 4) return "boss";
-  if (ctx.combo >= 30) return "veteran";
-  if (questionIndex >= 4) return "boss";
-  if (questionIndex >= 3) return "veteran";
-  const order: JournalistType[] = ["rookie", "economy", "investigative", "internet", "veteran", "boss"];
-  return order[Math.min(questionIndex, order.length - 1)];
 }

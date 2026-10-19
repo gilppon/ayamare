@@ -1,6 +1,7 @@
 import { ACTION_BY_LANE, STAGE_BPMS } from "./constants";
 import type { Chart, JournalistType, Note, QuestionEvent } from "./types";
 import type { Lang } from "@/i18n/ui";
+import { tr } from "@/i18n/ui";
 
 /** 데일리 실측 BPM (daily.mp3 온셋 분석값) */
 const DAILY_BPM = STAGE_BPMS.daily;
@@ -33,26 +34,67 @@ export function getDailyKey(date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
-/** 60초 데일리 차트. 같은 키면 항상 같은 차트. */
+/** (박자, 레인) 점유 키 — 한 마디 안의 중복 노트를 막는다 */
+function slotKey(beat: number, lane: number): string {
+  return `${beat}:${lane}`;
+}
+
+/**
+ * 아직 비어 있는 레인을 고른다.
+ *
+ * C-08: 도게자(레인 3)는 마디당 1개로 제한한다.
+ *   이전에는 `Math.floor(rng() * 4)` 균등 선택이라 도게자가 매 마디 25% 를
+ *   차지했다. 주석에 적힌 밸런스 규칙이 코드에 구현돼 있지 않았다.
+ *
+ * C-09: 같은 (박자, 레인) 을 두 번 고르지 않는다.
+ *   마디당 홀드 보장 노트가 밀도 루프의 노트와 시각·레인이 겹칠 수 있었고,
+ *   이 경우 어떤 노트를 쳐야 하는지 입력이 모호해진다.
+ */
+function pickFreeLane(
+  rng: () => number,
+  occupied: Set<string>,
+  beat: number,
+  dogezaUsed: boolean
+): 0 | 1 | 2 | 3 | null {
+  const pool: Array<0 | 1 | 2 | 3> = [];
+  for (const lane of [0, 1, 2] as const) {
+    if (!occupied.has(slotKey(beat, lane))) pool.push(lane);
+  }
+  if (!dogezaUsed && !occupied.has(slotKey(beat, 3))) pool.push(3);
+  if (!pool.length) return null;
+  return pool[Math.floor(rng() * pool.length)] ?? null;
+}
+
+/** 데일리 챌린지: 대략 1분 길이. 2마디 카운트인 + 플레이 구간. */
+export const DAILY_TOTAL_BARS = 30;
+
+/** 플레이 구간 밀도 (마디당 노트 수) */
+function densityFor(bar: number): number {
+  if (bar < 6) return 3;
+  if (bar < 12) return 4;
+  if (bar < 22) return 5;
+  return 6;
+}
+
 export function buildDailyChart(dailyKey: string, lang: Lang = "ko"): Chart {
   const rng = mulberry32(xfnv1a(`sumimasen-daily-${dailyKey}`));
   const notes: Note[] = [];
   let id = 100000 + xfnv1a(dailyKey) % 10000;
 
-  const totalBars = 18; // 2 카운트인 + 16 플레이 ≈ 60초 @130bpm
-  for (let bar = 2; bar < totalBars; bar++) {
-    const density = bar < 6 ? 3 : bar < 12 ? 4 : 5;
-    const usedBeats = new Set<number>();
+  for (let bar = 2; bar < DAILY_TOTAL_BARS; bar++) {
+    const density = densityFor(bar);
+    const occupied = new Set<string>();
+    let dogezaUsed = false;
+
     for (let k = 0; k < density; k++) {
       // 0,1,2,3 + 0.5 단위 8분박자 중 택1 (후반부는 8분박자 비중↑)
       const eighth = bar >= 10 && rng() < 0.35;
-      const beat = eighth
-        ? Math.floor(rng() * 8) * 0.5
-        : Math.floor(rng() * 4);
-      if (usedBeats.has(beat)) continue;
-      usedBeats.add(beat);
-      const lane = Math.floor(rng() * 4) as 0 | 1 | 2 | 3;
-      // 도게자는 마디당 1개 이하로 제한 (밸런스)
+      const beat = eighth ? Math.floor(rng() * 8) * 0.5 : Math.floor(rng() * 4);
+      const lane = pickFreeLane(rng, occupied, beat, dogezaUsed);
+      if (lane === null) continue;
+      occupied.add(slotKey(beat, lane));
+      if (lane === 3) dogezaUsed = true;
+
       const hold = rng() < 0.12 ? 1 : 0;
       let gimmick: Note["gimmick"] | undefined;
       const gr = rng();
@@ -68,16 +110,20 @@ export function buildDailyChart(dailyKey: string, lang: Lang = "ko"): Chart {
         gimmick,
       });
     }
-    // 4마디마다 홀드 1개 보장
+
+    // 4마디마다 홀드 1개 보장 (도게자는 홀드 guarantee 에 쓰지 않는다)
     if (bar % 4 === 0) {
-      const lane = Math.floor(rng() * 3) as 0 | 1 | 2;
-      notes.push({
-        id: id++,
-        time: (bar * 4 + 2) * BEAT,
-        lane,
-        action: ACTION_BY_LANE[lane],
-        hold: BEAT,
-      });
+      const lane = pickFreeLane(rng, occupied, 2, true);
+      if (lane !== null && lane !== 3) {
+        occupied.add(slotKey(2, lane));
+        notes.push({
+          id: id++,
+          time: (bar * 4 + 2) * BEAT,
+          lane,
+          action: ACTION_BY_LANE[lane],
+          hold: BEAT,
+        });
+      }
     }
   }
 
@@ -131,15 +177,9 @@ export function buildDailyChart(dailyKey: string, lang: Lang = "ko"): Chart {
   });
 
   const last = notes[notes.length - 1];
-  const subtitle =
-    lang === "ko"
-      ? "오늘만 열리는 60초 속죄"
-      : lang === "en"
-      ? "A 60-second atonement, today only"
-      : "今日だけの60秒の贖罪";
   return {
     title: `DAILY — ${dailyKey}`,
-    subtitle,
+    subtitle: tr(lang, "daily.subtitle"),
     bpm: DAILY_BPM,
     notes,
     questions,

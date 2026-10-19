@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { LANES } from "@/game/constants";
+import { LANES, stageLabelFor } from "@/game/constants";
 import { getDailyKey } from "@/game/daily";
 import { MISSIONS, isMissionComplete, missionProgress, missionText } from "@/game/missions";
 import { SKILLS, skillText, type SkillCategory } from "@/game/skills";
@@ -12,7 +12,6 @@ import { useProgressStore } from "@/stores/progressStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 interface TitleScreenProps {
-  capital: number;
   points: number;
   ownedSkills: SkillType[];
   equippedSkill: SkillType;
@@ -23,6 +22,9 @@ interface TitleScreenProps {
 }
 
 type Tab = "stage" | "shop" | "mission" | "records";
+
+/** 호위 김부장: 15°→45°→90°→도게자 반복 숙이기 각도 (모듈 상수 — 렌더마다 만들지 않는다) */
+const BOW_LOOP = [26, 52, 80, 92];
 
 const TABS: { id: Tab; labelKey: "title.tabStage" | "title.tabShop" | "title.tabMission" | "title.tabRecords" }[] = [
   { id: "stage", labelKey: "title.tabStage" },
@@ -37,7 +39,7 @@ const SHOP_CATS: { id: SkillCategory; labelKey: "shop.timing" | "shop.combo" | "
   { id: "mental", labelKey: "shop.mental" },
 ];
 
-export default function TitleScreen({ capital, points, ownedSkills, equippedSkill, onBuy, onEquip, onStart, onEditor }: TitleScreenProps) {
+export default function TitleScreen({ points, ownedSkills, equippedSkill, onBuy, onEquip, onStart, onEditor }: TitleScreenProps) {
   const [tab, setTab] = useState<Tab>("stage");
   const dailyKey = getDailyKey();
   const lang = useSettingsStore((s) => s.lang);
@@ -48,14 +50,16 @@ export default function TitleScreen({ capital, points, ownedSkills, equippedSkil
   const runHistory = useProgressStore((s) => s.runHistory);
   const bestByStage = useProgressStore((s) => s.bestByStage);
   // 호위 김부장: 15°→45°→90°→도게자 반복 숙이기 + 클릭 이스터에그
-  const BOW_LOOP = [26, 52, 80, 92];
   const [bowStep, setBowStep] = useState(1);
   const [easter, setEaster] = useState(false);
+  // L-14: 이 아이들러가 도는 동안 **기록 탭을 읽는 동안에도** 트리 전체가
+  // 1.1초마다 리렌더된다 (미션/베스트/상점 전부 재계산).
+  // 레인 조작이 없는 탭에서는 아이들러가 필요 없으므로 멈춘다.
   useEffect(() => {
-    if (easter) return;
+    if (easter || tab !== "stage") return;
     const id = window.setInterval(() => setBowStep((s) => (s + 1) % BOW_LOOP.length), 1100);
     return () => window.clearInterval(id);
-  }, [easter]);
+  }, [easter, tab]);
   useEffect(() => {
     if (!easter) return;
     const id = window.setTimeout(() => setEaster(false), 1600);
@@ -79,7 +83,7 @@ export default function TitleScreen({ capital, points, ownedSkills, equippedSkil
     <div className="relative flex h-full w-full flex-col items-center overflow-y-auto px-6 py-8">
       {/* backdrop */}
       <div className="pointer-events-none absolute inset-0">
-        <img src="/bg.jpg" className="h-full w-full object-cover opacity-25 blur-sm" alt="Background" />
+        <img src="/bg.jpg" className="h-full w-full object-cover opacity-25 blur-sm" alt="" aria-hidden="true" />
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(11,18,32,0.8)_0%,rgba(7,10,18,0.9)_55%,rgba(26,11,16,0.95)_100%)]" />
         <div className="comic-halftone absolute inset-0 opacity-60" />
         <div className="comic-speedlines absolute inset-0" />
@@ -127,7 +131,6 @@ export default function TitleScreen({ capital, points, ownedSkills, equippedSkil
           <div className="font-display text-2xl text-amber-300 drop-shadow">
             {points.toLocaleString()}P
           </div>
-          <div className="text-[10px] text-slate-500">¥{capital.toLocaleString()} {tr(lang, "title.capitalHolding")}</div>
         </div>
         {streak > 0 && (
           <div className="flex flex-col items-center justify-center rounded-xl border border-orange-400/20 bg-orange-500/10 p-3 backdrop-blur">
@@ -142,7 +145,7 @@ export default function TitleScreen({ capital, points, ownedSkills, equippedSkil
       <button
         onClick={() => setEaster(true)}
         className="mb-4 hidden w-[300px] shrink-0 cursor-pointer select-none lg:block xl:w-[340px]"
-        aria-label="kim"
+        aria-label={tr(lang, "title.kimHint")}
       >
         <div className="relative h-[380px] w-full">
           <ManagerKim angle={kimAngle} dogeza={kimDogeza} />
@@ -158,7 +161,7 @@ export default function TitleScreen({ capital, points, ownedSkills, equippedSkil
 
       <div className="flex w-full max-w-2xl flex-col items-center text-center">
         {/* 호위 김부장 (모바일 미니) */}
-        <button onClick={() => setEaster(true)} className="mb-1 h-44 w-56 cursor-pointer select-none lg:hidden" aria-label="kim">
+        <button onClick={() => setEaster(true)} className="mb-1 h-44 w-56 cursor-pointer select-none lg:hidden" aria-label={tr(lang, "title.kimHint")}>
           <ManagerKim angle={kimAngle} dogeza={kimDogeza} />
         </button>
         <p className="font-display tracking-[0.4em] text-rose-300/80">
@@ -390,7 +393,7 @@ export default function TitleScreen({ capital, points, ownedSkills, equippedSkil
               )}
               {Object.entries(bestByStage).map(([stage, b]) => (
                 <div key={stage} className="mb-1 flex items-center justify-between rounded-lg bg-slate-800/50 px-4 py-2 text-sm">
-                  <span className="font-bold text-slate-200">{stage}</span>
+                  <span className="font-bold text-slate-200">{stageLabelFor(stage, lang)}</span>
                   <span className="text-slate-400">
                     {b.score.toLocaleString()} · {(b.accuracy * 100).toFixed(1)}% · {b.grade}
                   </span>
@@ -402,7 +405,7 @@ export default function TitleScreen({ capital, points, ownedSkills, equippedSkil
               <h3 className="mb-2 font-display text-lg text-slate-300">{tr(lang, "title.recentTitle")}</h3>
               {[...runHistory].reverse().slice(0, 5).map((r, i) => (
                 <div key={`${r.date}-${i}`} className="mb-1 flex items-center justify-between rounded-lg bg-slate-800/30 px-4 py-2 text-xs text-slate-400">
-                  <span>{r.date} · {r.stageId}</span>
+                  <span>{r.date} · {stageLabelFor(r.stageId, lang)}</span>
                   <span>{r.score.toLocaleString()} · {(r.accuracy * 100).toFixed(1)}% · {r.grade} · {r.maxCombo}</span>
                 </div>
               ))}

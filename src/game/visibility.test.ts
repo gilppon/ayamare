@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { buildChart } from "./chart";
+import { buildDailyChart } from "./daily";
 import {
   DESPAWN_BEHIND,
   SPAWN_AHEAD,
+  SPEEDUP_EXPONENT,
   isNoteVisible,
+  noteFallY,
   selectPressTarget,
+  speedUpRemainingRatio,
+  visibleNoteWindow,
 } from "./visibility";
 
 describe("isNoteVisible", () => {
@@ -60,5 +65,86 @@ describe("selectPressTarget", () => {
     expect(selectPressTarget(notes, () => "pending", 0, 11, 0.26)).toBe(null);
     const picked = selectPressTarget(notes, () => "pending", 0, 10.05, 0.26);
     expect(picked?.id).toBe(1);
+  });
+});
+
+describe("visibleNoteWindow (P-01 이진 탐색 윈도우)", () => {
+  const mk = (times: number[]) =>
+    times.map((t, i) => ({
+      id: i,
+      time: t,
+      lane: 0 as const,
+      action: "bow15" as const,
+      hold: 0,
+    }));
+
+  it("전수 필터와 동일한 결과를 준다", () => {
+    const times = Array.from({ length: 200 }, (_, i) => i * 0.25);
+    const notes = mk(times);
+    for (const now of [0, 1.3, 12.7, 49.9, 60]) {
+      const { start, end } = visibleNoteWindow(notes, now);
+      const win = notes.slice(start, end);
+      const all = notes.filter((n) => isNoteVisible(n.time, now, "pending"));
+      expect(win.map((n) => n.id)).toEqual(all.map((n) => n.id));
+    }
+  });
+
+  it("윈도우가 실제로 좁다 (O(N) → O(윈도우))", () => {
+    const notes = mk(Array.from({ length: 500 }, (_, i) => i * 0.2));
+    const { start, end } = visibleNoteWindow(notes, 50);
+    expect(end - start).toBeLessThan(notes.length / 4);
+  });
+
+  it("모든 스테이지/데일리 채보가 time 오름차순 불변식을 만족한다", () => {
+    for (const stage of ["stage1", "stage2", "stage3", "stage4", "stage5"]) {
+      const notes = buildChart(stage).notes;
+      for (let i = 1; i < notes.length; i++) {
+        expect(notes[i].time).toBeGreaterThanOrEqual(notes[i - 1].time);
+      }
+    }
+    const d = buildDailyChart("2026-09-30").notes;
+    for (let i = 1; i < d.length; i++) {
+      expect(d[i].time).toBeGreaterThanOrEqual(d[i - 1].time);
+    }
+  });
+
+  it("빈 배열 / 범위 밖에서는 빈 윈도우", () => {
+    expect(visibleNoteWindow([], 0)).toEqual({ start: 0, end: 0 });
+    const notes = mk([10, 11]);
+    expect(visibleNoteWindow(notes, 0)).toEqual({ start: 0, end: 0 });
+  });
+});
+
+describe("noteFallY (speedUp 기믹 곡선)", () => {
+  const HIT = 400;
+  const SPEED = 200;
+
+  it("B-02 회귀: 마지막 1초에 등속보다 뒤처지지 않는다 (기존 d^1.6 은 감속)", () => {
+    for (const d of [0.1, 0.25, 0.5, 0.75]) {
+      // 보정 전 지수 1.6 은 d 에서 뒤처진다 (=멈춰 보인다)
+      expect(Math.pow(d, 1.6)).toBeLessThan(d);
+      // 보정 후 비율은 d 이상이어야 마지막 구간이 정방향 가속이다
+      expect(speedUpRemainingRatio(d)).toBeGreaterThanOrEqual(d);
+    }
+  });
+
+  it("d=1 에서 등속 곡선과 이어지고, d→0 에서 판정선에 정확히 도달한다", () => {
+    expect(SPEEDUP_EXPONENT).toBeLessThan(1);
+    expect(noteFallY(11, 10, HIT, SPEED)).toBeCloseTo(HIT - SPEED, 6);
+    expect(noteFallY(10, 10, HIT, SPEED)).toBeCloseTo(HIT, 6);
+  });
+
+  it("판정선을 지난 뒤 역주행하지 않는다 (Y 는 hitLineY 를 넘지 않는다)", () => {
+    // noteTime=0 기준. now>0 이면 이미 판정선을 지난 상태(d<0).
+    for (const now of [0.1, 0.5, 1.0, 3.0]) {
+      expect(noteFallY(0, now, HIT, SPEED)).toBeLessThanOrEqual(HIT + 1e-9);
+    }
+  });
+
+  it("1초 이전에는 선형(등속)이라 곡선이 끊기지 않는다", () => {
+    // d=1.0 경계에서 좌우 극한이 연속
+    const below = noteFallY(2.0, 0.999, HIT, SPEED);
+    const above = noteFallY(2.0, 1.0, HIT, SPEED);
+    expect(Math.abs(below - above)).toBeLessThan(1);
   });
 });

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AudioEngine, offsetForStage, trackForStage } from "@/game/audio";
 import { ensureVoiceBank } from "@/game/voiceBank";
 import { buildChart } from "@/game/chart";
 import {
+  ACTION_BY_LANE,
   ANGER_DELTA,
   INITIAL_ANGER,
   INITIAL_STOCK,
@@ -14,18 +15,17 @@ import {
   computeEnding,
   computeGrade,
   goodLines,
-  laneFromKeyboardEvent,
   missLines,
-  randomSns,
+  themeForStage,
 } from "@/game/constants";
 import {
   INITIAL_PRESS_CONTEXT,
-  intensifyQuestion,
   praiseForHit,
   tauntForMiss,
   type PressContext,
 } from "@/game/journalistAI";
 import { ddaTimingScale, initialDda, updateDda } from "@/game/dda";
+import { planFeedback } from "@/game/feedback";
 import {
   calculateAccuracy,
   comboMultiplier,
@@ -63,56 +63,45 @@ import type {
   SkillType,
   SnsItem,
 } from "@/game/types";
-import { AngerMeter, SnsFeed, StockPanel } from "./HUD";
 import Journalist from "./Journalist";
-import PlayerCharacter from "./PlayerCharacter";
+import NoteField from "./game/NoteField";
+import type { TelegraphItem } from "./game/NoteField";
+import { useLaneInput } from "./game/useLaneInput";
+import { useGameLoop, type LoopContext } from "./game/useGameLoop";
+import { useStageEffects } from "./game/useStageEffects";
 import {
-  LEAD_TIME,
+  CameraFlashes,
+  LaneKeys,
+  ReactionLine,
+  ReporterSlot,
+  SidePanels,
+  TopHud,
+} from "./game/GameHud";
+import {
+  CountdownOverlay,
+  DoneOverlay,
+  LiveJudgment,
+  PauseOverlay,
+  ReadyOverlay,
+} from "./game/Overlays";
+import PlayerCharacter from "./PlayerCharacter";
+import type { ManagerKimHandle } from "./ManagerKim";
+import { telegraphsFor } from "@/game/noteLayout";
+import {
+  SPAWN_AHEAD,
   isNoteVisible,
   selectPressTarget,
+  visibleNoteWindow,
 } from "@/game/visibility";
 
-const ACTION_RANK: Record<ApologyAction, number> = {
-  bow15: 1,
-  bow45: 2,
-  bow90: 3,
-  dogeza: 4,
-};
 
-const ANGLE_MAP: Record<ApologyAction, number> = {
-  bow15: 26,
-  bow45: 52,
-  bow90: 80,
-  dogeza: 92,
-};
-
-function deeper(a: ApologyAction | null, b: ApologyAction): ApologyAction {
-  if (!a) return b;
-  return ACTION_RANK[a] >= ACTION_RANK[b] ? a : b;
-}
 
 function pickLine(arr: string[]): string {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-interface Popup {
-  id: number;
-  judgment: Judgment;
-  lane: number;
-}
-
-interface Flash {
-  id: number;
-  x: number;
-  y: number;
-}
-
-interface Spark {
-  id: number;
-  lane: number;
-  tx: string;
-  ty: string;
-  color: string;
+function emptyCounts(): JudgmentCounts {
+  return { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
 }
 
 interface GameScreenProps {
@@ -121,9 +110,18 @@ interface GameScreenProps {
   chartOverride?: Chart;
   onFinish: (result: GameResult) => void;
   onQuit: () => void;
+  /** U-01: 실제 플레이 중(ready/paused 아님)인지 상위에게 통지 — 설정 패널 잠금용 */
+  onRunActiveChange?: (active: boolean) => void;
 }
 
-export default function GameScreen({ stageId, equippedSkill, chartOverride, onFinish, onQuit }: GameScreenProps) {
+export default function GameScreen({
+  stageId,
+  equippedSkill,
+  chartOverride,
+  onFinish,
+  onQuit,
+  onRunActiveChange,
+}: GameScreenProps) {
   const timingScale = useSettingsStore((s) => s.timingScale);
   const keyMap = useSettingsStore((s) => s.keyMap);
   const reduceMotion = useSettingsStore((s) => s.reduceMotion);
@@ -138,10 +136,11 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
   const [dda, setDda] = useState(initialDda);
   const ddaRef = useRef(dda);
   const pressRef = useRef<PressContext>({ ...INITIAL_PRESS_CONTEXT });
+  // DDA 윈도우 부스트를 반영한다. `dda` state 는 `ddaRef` 와 lock-step 으로 갱신되므로
+  // 렌더 시점 값이 곧 최신 값이다 (ref 를 직접 읽으면 deps 추적이 불가능해진다).
   const timingWindows = useMemo(
-    () => getTimingWindows(ddaTimingScale(effectiveTimingScale(timingScale, skills), ddaRef.current)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [timingScale, skills, dda.windowBoost]
+    () => getTimingWindows(ddaTimingScale(effectiveTimingScale(timingScale, skills), dda)),
+    [timingScale, skills, dda]
   );
   const startAnger = useMemo(
     () => Math.max(0, INITIAL_ANGER + initialAngerBonus(skills)),
@@ -165,158 +164,141 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
   );
   const holdLaneRef = useRef<Map<number, number>>(new Map());
   const holdPressRef = useRef<Map<number, number>>(new Map());
+  // B-01: 홀드 노트 강제 해제 기한(song time). lane -> noteId 맵 대신
+  // noteId -> deadline 을 따로 들고 있어 lane 정리를 역추적 없이 수행한다.
+  const holdDeadlineRef = useRef<Map<number, number>>(new Map());
   const scoreRef = useRef(0);
   const comboRef = useRef(0);
   const maxComboRef = useRef(0);
   const dogezaHitsRef = useRef(0);
   const angerRef = useRef(startAnger);
   const stockRef = useRef(startStock);
-  const countsRef = useRef<JudgmentCounts>({
-    PERFECT: 0,
-    GREAT: 0,
-    GOOD: 0,
-    BAD: 0,
-    MISS: 0,
-  });
+  const countsRef = useRef<JudgmentCounts>(emptyCounts());
+  // B-08: 릴리즈 판정은 탭 판정과 분리 집계 (정확도 분모 불변 유지)
+  const releaseCountsRef = useRef<JudgmentCounts>(emptyCounts());
+  const forcedReleaseRef = useRef(0);
   const qIndexRef = useRef(0);
+  /** P-01: MISS 판정 커서 (정렬된 노트 배열에서 앞으로만 스캔) */
+  const missCursorRef = useRef<{ notes: Note[] | null; index: number }>({ notes: null, index: 0 });
   const finishedRef = useRef(false);
-  // A-01: chart 재생성(lang 변경) 시 판정 ref 리셋 — 소프트락 방지
-  useEffect(() => {
-    noteStateRef.current = new Map(chart.notes.map((n) => [n.id, "pending"]));
-    qIndexRef.current = 0;
-    countsRef.current = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
-    setQuestion(chart.questions[0]);
-  }, [chart]);
+  /** B-06: 언마운트/비동기 대기의 취소를 감지하기 위한 플래그 */
+  const unmountedRef = useRef(false);
   const lastTapRef = useRef<{ action: ApologyAction; time: number } | null>(null);
   const poseAngleRef = useRef(0);
   const dogezaRef = useRef(false);
-  const popupIdRef = useRef(0);
-  const flashIdRef = useRef(0);
-  const reactionIdRef = useRef(0);
-  const activePressLanesRef = useRef<Set<number>>(new Set());
+  /** P-01: 렌더에 실제로 쓰이는 도게자 상태 (_ref 는 RAF hot path 비교용) */
+  const [dogezaPose, setDogezaPose] = useState(false);
+  /** U-01: 일시정지 상태 (RAF hot path 에서 직접 읽음) */
+  const pausedRef = useRef(false);
+  /** 일시정지 전환 시 레인 상태를 비우는 동작 (useLaneInput 결과로 채워진다) */
+  const clearPressedRef = useRef<() => void>(() => {});
+  /** B-14: RAF 루프(1회 설치)가 읽을 가변 컨텍스트 (초깃값 — 아래 effect 가 매 렌더 갱신) */
+  const loopCtxRef = useRef<LoopContext>({
+    timingWindows: getTimingWindows(),
+    notes: chart.notes,
+    questions: chart.questions,
+    duration: chart.duration,
+    noteMap: noteMap as ReadonlyMap<number, Note>,
+    lang,
+    applyJudgment: () => {},
+    pressCtx: (): PressContext => INITIAL_PRESS_CONTEXT,
+    sweepForcedReleases: () => {},
+    finish: () => {},
+    isHitstopped: (): boolean => false,
+    decayZoom: () => {},
+    getPressedLanes: (): number[] => [],
+    setQuestion: () => {},
+  });
   // ── game feel refs
-  const hitstopRef = useRef(0);
   const poseVelRef = useRef(0);
-  const shockIdRef = useRef(0);
-  const slowmoIdRef = useRef(0);
 
   // ── state
   const [phase, setPhase] = useState<"ready" | "playing" | "done">("ready");
-  const [pressedLanes, setPressedLanes] = useState<number[]>([]);
+  const [paused, setPaused] = useState(false);
   const [now, setNow] = useState(0);
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
   const [anger, setAnger] = useState(startAnger);
   const [stock, setStock] = useState(startStock);
   const [stockHistory, setStockHistory] = useState<number[]>([startStock]);
-  const [popups, setPopups] = useState<Popup[]>([]);
-  const [flashes, setFlashes] = useState<Flash[]>([]);
-  const sparkIdRef = useRef(0);
-  const [sparks, setSparks] = useState<Spark[]>([]);
-  const [zoomPunch, setZoomPunch] = useState(0);
-  const [shockwaves, setShockwaves] = useState<{ id: number; lane: number }[]>([]);
-  const [slowmo, setSlowmo] = useState<{ id: number; label: string } | null>(null);
+  /** Q-05: 연출 상태는 useStageEffects 훅으로 분리 */
+  const fx = useStageEffects(reduceMotion);
+  const {
+    popups,
+    flashes,
+    sparks,
+    shockwaves,
+    solidRings,
+    reaction,
+    sns,
+    slowmo,
+    zoomPunch,
+    liveJudgment,
+    setReactionLine,
+    pushSns: pushSnsFx,
+    isHitstopped,
+    decayZoom,
+    applyPlan,
+    triggerSlowmo,
+    clearTransient,
+  } = fx;
 
-  const triggerHitstop = (ms: number) => {
-    if (reduceMotion) return;
-    hitstopRef.current = performance.now() + ms;
-  };
+  // A-01: chart 재생성(lang 변경) 시 판정 ref 리셋 — 소프트락 방지
+  useEffect(() => {
+    noteStateRef.current = new Map(chart.notes.map((n) => [n.id, "pending"]));
+    qIndexRef.current = 0;
+    countsRef.current = emptyCounts();
+    releaseCountsRef.current = emptyCounts();
+    forcedReleaseRef.current = 0;
+    missCursorRef.current = { notes: null, index: 0 };
+    holdLaneRef.current.clear();
+    holdPressRef.current.clear();
+    holdDeadlineRef.current.clear();
+    clearPressedRef.current();
+    // 채보 교체 시 이전 런의 팝업/슬로모/링이 화면에 남지 않게 한다
+    clearTransient();
+    setQuestion(chart.questions[0]);
+  }, [chart, clearTransient]);
 
-  const triggerZoom = (strength: number) => {
-    if (reduceMotion) return;
-    setZoomPunch((z) => Math.min(1.5, z + strength));
-  };
+  /** U-04 announce 용으로 레인 이름을 함께 넘긴다 */
+  const laneName = useCallback(
+    (lane: number) => LANE_NAMES[lang][ACTION_BY_LANE[lane]],
+    [lang]
+  );
 
-  const addShockwave = (lane: number) => {
-    if (reduceMotion) return;
-    const id = shockIdRef.current++;
-    setShockwaves((s) => [...s.slice(-5), { id, lane }]);
-    window.setTimeout(() => {
-      setShockwaves((s) => s.filter((x) => x.id !== id));
-    }, 450);
-  };
+  /** SNS 는 현재 언어를 함께 전달한다 (i18n) */
+  const pushSns = useCallback(
+    (tone: SnsItem["tone"]) => pushSnsFx(tone, lang),
+    [pushSnsFx, lang]
+  );
 
-  const triggerSlowmo = (label: string, ms = 600) => {
-    if (reduceMotion) return;
-    const id = slowmoIdRef.current++;
-    setSlowmo({ id, label });
-    window.setTimeout(() => {
-      setSlowmo((s) => (s && s.id === id ? null : s));
-    }, ms);
-  };
-
-  const addSparks = (lane: number, count: number, color: string) => {
-    const newSparks: Spark[] = [];
-    for (let i = 0; i < count; i++) {
-      const tx = (Math.random() - 0.5) * 120 + "px";
-      const ty = (Math.random() - 0.5) * 120 + "px";
-      newSparks.push({ id: sparkIdRef.current++, lane, tx, ty, color });
-    }
-    // 상한 60개 (고밀도 구간 DOM 폭증 방지)
-    setSparks((s) => [...s.slice(-60), ...newSparks].slice(-60));
-    window.setTimeout(() => {
-      const ids = new Set(newSparks.map((s) => s.id));
-      setSparks((s) => s.filter((x) => !ids.has(x.id)));
-    }, 450);
-  };
-  const [sns, setSns] = useState<SnsItem[]>([]);
-  const [reaction, setReaction] = useState<{
-    id: number;
-    text: string;
-    tone: "bad" | "good";
-  } | null>(null);
   const [question, setQuestion] = useState<QuestionEvent | undefined>(chart.questions[0]);
   const [laneSize, setLaneSize] = useState({ w: 0, h: 0 });
   const laneRef = useRef<HTMLDivElement>(null);
+  /** 캐릭터 회전 직접 제어 핸들 */
+  const kimRef = useRef<ManagerKimHandle>(null);
+  /** NoteField 메모이제이션을 유지하기 위한 안정적 콜백 (ref 를 읽기만 한다) */
+  const noteStateOf = useCallback(
+    (id: number) => noteStateRef.current.get(id),
+    []
+  );
 
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
 
-  const mountTimeRef = useRef(Date.now());
+  // U-01/B-04: 실제 플레이 중일 때만 상위에게 알려 설정 패널을 잠근다.
+  // (플레이 중 언어 변경 시 chart 재생성으로 런 상태가 붕괴되던 버그의 차단 지점)
+  useEffect(() => {
+    onRunActiveChange?.(phase === "playing" && !paused);
+    return () => onRunActiveChange?.(false);
+  }, [phase, paused, onRunActiveChange]);
+
 
   const songTime = () => {
     const a = audioRef.current;
     if (!a || startTimeRef.current === 0) return 0;
     return Math.max(0, a.now() - startTimeRef.current);
-  };
-
-  // ── feedback helpers
-  const addPopup = (judgment: Judgment, lane: number) => {
-    const id = popupIdRef.current++;
-    setPopups((p) => [...p, { id, judgment, lane }]);
-    window.setTimeout(
-      () => setPopups((p) => p.filter((x) => x.id !== id)),
-      720
-    );
-  };
-
-  const addFlashes = (count: number) => {
-    for (let i = 0; i < count; i++) {
-      const id = flashIdRef.current++;
-      // 상한 12개
-      setFlashes((f) => [
-        ...f.slice(-12),
-        { id, x: 12 + Math.random() * 76, y: 10 + Math.random() * 70 },
-      ]);
-      window.setTimeout(
-        () => setFlashes((f) => f.filter((x) => x.id !== id)),
-        320
-      );
-    }
-  };
-
-  const pushSns = (tone: SnsItem["tone"]) => {
-    setSns((s) => [randomSns(tone, lang), ...s].slice(0, 5));
-  };
-
-  const setReactionLine = (text: string, tone: "bad" | "good") => {
-    const id = reactionIdRef.current++;
-    setReaction({ id, text, tone });
-    window.setTimeout(
-      () => setReaction((r) => (r && r.id === id ? null : r)),
-      1700
-    );
   };
 
   const updateAnger = (j: Judgment) => {
@@ -354,6 +336,8 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
       stockDelta: (stockRef.current - startStock) / startStock,
       accuracy: acc,
       dogezaHits: dogezaHitsRef.current,
+      // B-13: 표본 수를 함께 넘겨 "근거 없는 칭찬" 을 막는다
+      judged: total + releaseCountsRef.current.PERFECT + releaseCountsRef.current.GREAT,
     };
   };
 
@@ -406,12 +390,11 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
     }
     setCombo(comboRef.current);
 
-    // 오디오: 인텐시티만 갱신 (버튼 타격 SFX는 제거됨)
+    // 오디오: 인텐시티 갱신 + A-01 타격 SFX (펜타토닉 상승/덕킹)
     const c = comboRef.current;
     audioRef.current?.setIntensity(c >= 50 ? 3 : c >= 30 ? 2 : c >= 10 ? 1 : 0);
-    if (judgment === "BAD" || judgment === "MISS") {
-      audioRef.current?.duck(judgment === "MISS" ? 0.4 : 0.25);
-    }
+    // playHit 가 judgment 에 맞는 타격음과 덕킹을 함께 처리하므로 별도 duck 을 두지 않는다
+    audioRef.current?.playHit(judgment, c);
 
     updateAnger(judgment);
     
@@ -421,46 +404,34 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
       updateStock(judgment);
     }
 
-    // 모션 감소 모드에서는 플래시/스파크 양 감소
-    const flashScale = reduceMotion ? 0 : 1;
     const isDogeza = note.action === "dogeza";
     const ctx = pressCtx();
     const seed = countsRef.current.PERFECT + countsRef.current.MISS;
 
+    // I-07: 연출 채널 선택은 순수함수 planFeedback 가 담당한다.
+    // 여기서는 (1) 판정 상태 (점수/분노/주가) (2) 소셜 반응 (3) 연출 실행만 한다.
+    applyPlan(planFeedback(judgment, isDogeza, reduceMotion), note.lane, laneName(note.lane), judgment);
+
+    // I-06: 도게자 클라이맥스는 실제로 시간을 늦춘다 (비주얼 전용).
+    // 판정·MISS 판정은 계속 오디오 시간을 쓰므로 채보 싱크는 흔들리지 않는다.
+    if (isDogeza && judgment === "PERFECT" && !reduceMotion) {
+      triggerSlowmo("DOGEZA!!", 650);
+    }
+
     if (judgment === "MISS") {
-      addPopup("MISS", note.lane);
-      if (flashScale) addFlashes(1);
       // 70% 기자 AI 추궁, 30% 기존 랜덤
       setReactionLine(Math.random() < 0.7 ? tauntForMiss(ctx, seed, lang) : pickLine(missLines(lang)), "bad");
       if (Math.random() < 0.6) pushSns("negative");
     } else if (judgment === "BAD") {
-      addPopup("BAD", note.lane);
-      if (flashScale) addFlashes(1);
       if (Math.random() < 0.5) setReactionLine(Math.random() < 0.6 ? tauntForMiss(ctx, seed, lang) : pickLine(missLines(lang)), "bad");
       if (Math.random() < 0.4) pushSns("negative");
     } else if (judgment === "PERFECT") {
-      addPopup("PERFECT", note.lane);
-      if (flashScale) addFlashes(isDogeza ? 6 : 4);
-      if (!reduceMotion) addSparks(note.lane, isDogeza ? 12 : 8, JUDGMENTS["PERFECT"].color);
-      // 게임필: 히트스탑 + 줌펀치 + 쇼크웨이브, 도게자는 슬로모
-      triggerHitstop(isDogeza ? 70 : 40);
-      triggerZoom(isDogeza ? 1.2 : 0.7);
-      addShockwave(note.lane);
-      if (isDogeza) triggerSlowmo("DOGEZA!!", 650);
       if (Math.random() < 0.4) setReactionLine(Math.random() < 0.6 ? praiseForHit(ctx, seed, lang) : pickLine(goodLines(lang)), "good");
       if (Math.random() < 0.5) pushSns("positive");
     } else if (judgment === "GREAT") {
-      addPopup("GREAT", note.lane);
-      if (flashScale) addFlashes(2);
-      if (!reduceMotion) addSparks(note.lane, 5, JUDGMENTS["GREAT"].color);
-      triggerZoom(0.35);
-      if (isDogeza) addShockwave(note.lane);
       if (Math.random() < 0.3) pushSns("positive");
-    } else {
-      addPopup("GOOD", note.lane);
-      if (flashScale) addFlashes(1);
-      if (!reduceMotion) addSparks(note.lane, 3, JUDGMENTS["GOOD"].color);
-      if (Math.random() < 0.15) pushSns("neutral");
+    } else if (Math.random() < 0.15) {
+      pushSns("neutral");
     }
   };
 
@@ -487,8 +458,90 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
     if (best.hold > 0) {
       holdLaneRef.current.set(lane, best.id);
       holdPressRef.current.set(best.id, time);
+      // B-01: 이 노트가 언제까지 유지되어야 하는지 기록해 스윕이 역추적한다
+      holdDeadlineRef.current.set(best.id, best.time + best.hold);
     }
     applyJudgment(best, judgment);
+  };
+
+  /**
+   * B-08: 홀드 릴리즈의 유일한 진입점.
+   * `handleRelease`(정상 놓기)와 `sweepForcedReleases`(놓침) 둘 다 여기를 지난다.
+   * 탭 판정(countsRef)에는 넣지 않아 `total = notes.length` 불변식을 보존한다.
+   * 대신 DDA·분노·주가·피드백은 갱신해 스팟 익스플로잇을 막는다.
+   */
+  const applyRelease = (note: Note, judgment: Judgment, forced = false) => {
+    releaseCountsRef.current[judgment] += 1;
+    if (forced) forcedReleaseRef.current += 1;
+
+    const mult = comboMultiplier(comboRef.current);
+    scoreRef.current += Math.round(JUDGMENTS[judgment].score * 0.5 * mult);
+    setScore(scoreRef.current);
+
+    // DDA 갱신 — 연속 BAD 릴리즈도 조준 난이도를 올린다
+    ddaRef.current = updateDda(ddaRef.current, judgment);
+    setDda(ddaRef.current);
+
+    const pr = pressRef.current;
+    if (judgment === "BAD" || judgment === "MISS") {
+      pr.missStreak += 1;
+      pr.perfectStreak = 0;
+    } else {
+      pr.missStreak = 0;
+      pr.perfectStreak = judgment === "PERFECT" ? pr.perfectStreak + 1 : 0;
+    }
+
+    updateAnger(judgment);
+    updateStock(judgment);
+
+    // I-07: 릴리즈도 같은 플래너를 쓴다 (탭보다 약한 등급).
+    const releasePlan = planFeedback(judgment, false, reduceMotion);
+    // 절반 강도로 깎는다 — 릴리즈는 탭의 "보조" 판정이기 때문이다
+    applyPlan(
+      {
+        ...releasePlan,
+        sparks: Math.round(releasePlan.sparks * 0.5),
+        flashes: Math.round(releasePlan.flashes * 0.5),
+        zoom: releasePlan.zoom * 0.5,
+        shockwave: false,
+        hitstopMs: 0,
+      },
+      note.lane,
+      laneName(note.lane),
+      judgment
+    );
+    hapticFor[releasePlan.haptic === "none" ? "bad" : releasePlan.haptic]();
+    audioRef.current?.playHit(judgment, comboRef.current);
+
+    if (judgment === "PERFECT" || judgment === "GREAT") {
+      if (judgment === "PERFECT" && Math.random() < 0.4) pushSns("positive");
+    } else {
+      // B-08: BAD 릴리즈도 화폐/분노 페널티 + 타격음이 붙는다 (기존엔 무벌점)
+      setReactionLine(tr(lang, "game.holdEarly"), "bad");
+      if (Math.random() < 0.5) pushSns("negative");
+    }
+  };
+
+  /**
+   * B-01: 기한을 넘긴 홀드 노트를 강제 해제한다.
+   * 놓치면 `"holding"` 상태로 영구 잔존해 레인이 잠기고 정확도가 오염되던 버그의 해법.
+   * 기한은 judgeRelease이 GOOD을 허용하는 최대 오차(bad*2)보다 항상 커야 한다.
+   */
+  const sweepForcedReleases = (t: number) => {
+    if (holdDeadlineRef.current.size === 0) return;
+    const grace = Math.max(0.35, (timingWindows.bad * 2) / 1000 + 0.05);
+    for (const [noteId, deadline] of holdDeadlineRef.current) {
+      if (t < deadline + grace) continue;
+      holdDeadlineRef.current.delete(noteId);
+      holdPressRef.current.delete(noteId);
+      for (const [lane, id] of holdLaneRef.current) {
+        if (id === noteId) holdLaneRef.current.delete(lane);
+      }
+      const note = noteMap.get(noteId);
+      if (!note) continue;
+      noteStateRef.current.set(noteId, "hit");
+      applyRelease(note, "BAD", true);
+    }
   };
 
   const handleRelease = (lane: number, time: number) => {
@@ -498,6 +551,7 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
     const note = noteMap.get(noteId);
     if (!note) return;
     noteStateRef.current.set(noteId, "hit");
+    holdDeadlineRef.current.delete(noteId);
 
     const pressTime = holdPressRef.current.get(noteId) ?? note.time;
     holdPressRef.current.delete(noteId);
@@ -507,18 +561,8 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
 
     const rawRelease = judgeRelease(diff, equippedSkill, timingWindows);
     const release = upgradeReleaseJudgment(rawRelease, skills);
+    applyRelease(note, release);
 
-    scoreRef.current += Math.round(JUDGMENTS[release].score * 0.5);
-    setScore(scoreRef.current);
-
-    if (release === "PERFECT" || release === "GREAT") {
-      addPopup(release, note.lane);
-      if (!reduceMotion) {
-        addFlashes(2);
-        addSparks(note.lane, release === "PERFECT" ? 8 : 5, JUDGMENTS[release].color);
-      }
-      if (release === "PERFECT" && Math.random() < 0.4) pushSns("positive");
-    }
     if (heldFor < note.hold * 0.5) {
       setReactionLine(tr(lang, "game.holdEarly"), "bad");
       if (Math.random() < 0.5) pushSns("negative");
@@ -528,6 +572,8 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
   const finish = () => {
     if (finishedRef.current) return;
     finishedRef.current = true;
+    pausedRef.current = false;
+    setPaused(false);
     stopVoice();
     audioRef.current?.stop();
     const total = chart.notes.length;
@@ -545,6 +591,8 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
       score: scoreRef.current,
       maxCombo: maxComboRef.current,
       counts: c,
+      releaseCounts: releaseCountsRef.current,
+      forcedReleases: forcedReleaseRef.current,
       accuracy,
       grade,
       allPerfect,
@@ -564,71 +612,123 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
     phaseRef.current = "playing";
     // 음성 뱅크가 아직이면 기다렸다 시작 (캐시되면 즉시)
     await ensureVoiceBank().catch(() => undefined);
+    // B-06: 대기 중 quit/언마운트가 끼면 컨텍스트를 만들지 않는다.
+    // (이전에는 quit 이후에 AudioContext + 스케줄러가 생성돼 아무도 stop 하지 않았다)
+    if (unmountedRef.current) return;
     const audio = new AudioEngine(chart.bpm, trackForStage(stageId), offsetForStage(stageId));
     audioRef.current = audio;
     const start = await audio.start();
+    if (unmountedRef.current) {
+      audio.stop();
+      return;
+    }
     startTimeRef.current = start;
     setPhase("playing");
   };
 
+  /**
+   * U-01 일시정지 토글. `AudioContext.suspend()` 로 곡 타임라인을 정확히 멈춘다.
+   * 언마운트 후 예약된 호출이 no-op 되도록 unmountedRef 로 가드한다.
+   */
+  const togglePause = useCallback(() => {
+    if (phaseRef.current !== "playing" && !pausedRef.current) return;
+    const next = !pausedRef.current;
+    pausedRef.current = next;
+    setPaused(next);
+    if (next) {
+      stopVoice();
+      // 일시정지 중 눌린 키는 풀어둔다 (복귀 직후 포즈가 끼어 있지 않도록)
+      clearPressedRef.current();
+      void audioRef.current?.pause();
+    } else {
+      void audioRef.current?.resume();
+    }
+  }, []);
+
+  // U-02: 탭/창 포커스 상실 시 자동 일시정지.
+  // 백그라운드 탭에서는 setInterval 이 스로틀되고 currentTime 이 튀어 복귀 시 대량 MISS 가 난다.
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden" && phaseRef.current === "playing" && !pausedRef.current) {
+        togglePause();
+      }
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("blur", onHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("blur", onHide);
+    };
+  }, [togglePause]);
+
   const quit = () => {
     stopVoice();
     audioRef.current?.stop();
+    audioRef.current = null;
+    clearTransient();
     onQuit();
   };
 
-  const onLanePress = (lane: number) => {
-    if (Date.now() - mountTimeRef.current < 500) return; // 0.5초간 키 먹힘 방지 (의도치 않은 자동 시작 차단)
-    if (phaseRef.current === "ready") {
-      startGame();
-      return;
-    }
-    if (phaseRef.current !== "playing") return;
-    activePressLanesRef.current.add(lane);
-    setPressedLanes(Array.from(activePressLanesRef.current));
-    const t = songTime();
-    const laneConfig = LANES[lane];
-    if (laneConfig) {
-      lastTapRef.current = { action: laneConfig.action, time: t };
-    }
-    if (holdLaneRef.current.has(lane)) return;
-    handlePress(lane, t);
-  };
-
-  const onLaneRelease = (lane: number) => {
-    activePressLanesRef.current.delete(lane);
-    setPressedLanes(Array.from(activePressLanesRef.current));
-    if (phaseRef.current !== "playing") return;
-    handleRelease(lane, songTime());
-  };
-
-  // ── input (커스텀 키맵 + 한글 IME 대응)
+  // B-06: 언마운트 정리. StrictMode 더블 마운트와 예외 경로에서
+  // AudioContext / 25ms 스케줄러 / TTS 가 잔존하지 않게 한다.
   useEffect(() => {
-    const down = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        quit();
-        return;
-      }
-      // IME 조합 중이면 e.key가 한글 음절일 수 있어 e.code로 폴백
-      const lane = laneFromKeyboardEvent(e, keyMap);
-      if (lane === undefined) return;
-      e.preventDefault();
-      if (e.repeat) return;
-      onLanePress(lane);
-    };
-    const up = (e: KeyboardEvent) => {
-      const lane = laneFromKeyboardEvent(e, keyMap);
-      if (lane === undefined) return;
-      onLaneRelease(lane);
-    };
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
+    unmountedRef.current = false;
     return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
+      unmountedRef.current = true;
+      stopVoice();
+      audioRef.current?.stop();
+      audioRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyMap]);
+  }, []);
+
+  /**
+   * Q-05: 입력 계층은 useLaneInput 훅이 소유한다.
+   * B-07: 포인터 ID 로 레인 상태 추적 · B-04/B-15: 항상 최신 핸들러로 디스패치.
+   * `startGame`/`togglePause`/`quit` 는 아래에서 선언되므로 ref 로 우회해 순환을 피한다.
+   */
+  const inputReadyRef = useRef<() => void>(() => {});
+  const inputNowRef = useRef<() => number>(() => 0);
+  const inputPlayingRef = useRef<() => boolean>(() => false);
+  /** B-16: 일시정지 중에도 true (Escape 가 재개로 가도록) */
+  const inputCanPauseRef = useRef<() => boolean>(() => false);
+  const inputTapRef = useRef<(a: ApologyAction, t: number) => void>(() => {});
+  const inputPressRef = useRef<(lane: number, t: number) => void>(() => {});
+  const inputReleaseRef = useRef<(lane: number, t: number) => void>(() => {});
+  const inputHeldRef = useRef<(lane: number) => boolean>(() => false);
+  const inputPauseRef = useRef<() => void>(() => {});
+  const inputQuitRef = useRef<() => void>(() => {});
+
+  const { pressedLanes, onPress: onLanePress, onRelease: onLaneRelease, clearPressed, getPressedLanes } =
+    useLaneInput(keyMap, {
+      now: () => inputNowRef.current(),
+      isPlaying: () => inputPlayingRef.current(),
+      canTogglePause: () => inputCanPauseRef.current(),
+      start: () => inputReadyRef.current(),
+      press: (lane, t) => inputPressRef.current(lane, t),
+      release: (lane, t) => inputReleaseRef.current(lane, t),
+      togglePause: () => inputPauseRef.current(),
+      quit: () => inputQuitRef.current(),
+      isLaneHeld: (lane) => inputHeldRef.current(lane),
+      recordTap: (action, t) => inputTapRef.current(action, t),
+    });
+  clearPressedRef.current = clearPressed;
+
+  // 위 훅이 사용하는 핸들러들을 실제 구현에 연결한다.
+  // (선언 순서상 startGame/togglePause/quit 이 훅 호출보다 뒤에 있으므로 ref 로 우회)
+  useEffect(() => {
+    inputNowRef.current = songTime;
+    inputPlayingRef.current = () => phaseRef.current === "playing" && !pausedRef.current;
+    inputCanPauseRef.current = () => phaseRef.current === "playing";
+    inputReadyRef.current = startGame;
+    inputPressRef.current = handlePress;
+    inputReleaseRef.current = handleRelease;
+    inputTapRef.current = (action, t) => {
+      lastTapRef.current = { action, time: t };
+    };
+    inputHeldRef.current = (lane) => holdLaneRef.current.has(lane);
+    inputPauseRef.current = togglePause;
+    inputQuitRef.current = quit;
+  });
 
   // ── measure lane area
   useEffect(() => {
@@ -643,92 +743,67 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
     return () => window.removeEventListener("resize", measure);
   }, []);
 
-  // ── game loop (히트스탑 + 스프링 포즈)
-  useEffect(() => {
-    let raf = 0;
-    const loop = () => {
-      const ph = phaseRef.current;
-      if (ph === "playing" || ph === "done") {
-        // 히트스탑: 시각 업데이트 일시 정지 (오디오는 계속)
-        if (performance.now() < hitstopRef.current) {
-          raf = requestAnimationFrame(loop);
-          return;
-        }
-        const t = songTime();
-        setNow(t);
-        // 줌펀치 감쇠
-        setZoomPunch((z) => (z > 0.01 ? z * 0.88 : 0));
-        if (ph === "playing") {
-          // miss detection — 실효 BAD 윈도우 기준 (DDA 부스트 시 더 늦게 MISS)
-          const missWindowSec = timingWindows.bad / 1000;
-          for (const n of chart.notes) {
-            if (n.gimmick === "fake") continue;
-            if (noteStateRef.current.get(n.id) !== "pending") continue;
-            if (n.time + missWindowSec < t) {
-              // Circuit Breaker: 만약 시간이 워프(3초 이상 갭)했다면 비정상 방치이므로 MISS 처리 대신 PASS
-              if (t - n.time > 3.0) {
-                 noteStateRef.current.set(n.id, "miss"); // 지나가게 두되
-                 // applyJudgment(n, "MISS"); // 데미지는 입히지 않음 (방치 폭사 방지)
-              } else {
-                 noteStateRef.current.set(n.id, "miss");
-                 applyJudgment(n, "MISS");
-              }
-            }
-          }
-          // question advance — 기자 AI가 상황별 꼬리 추가
-          while (
-            qIndexRef.current < chart.questions.length &&
-            chart.questions[qIndexRef.current].time <= t
-          ) {
-            const base = chart.questions[qIndexRef.current];
-            const ctx = pressCtx();
-            const seed = qIndexRef.current + comboRef.current;
-            setQuestion({ ...base, text: intensifyQuestion(base.text, ctx, seed, lang) });
-            pressRef.current.questionIndex = qIndexRef.current + 1;
-            qIndexRef.current++;
-          }
-          // pose — 스프링 물리 (탄성 있는 숙이기)
-          let desired: ApologyAction | null = null;
-          holdLaneRef.current.forEach((id) => {
-            const n = noteMap.get(id);
-            if (n) desired = deeper(desired, n.action);
-          });
-          activePressLanesRef.current.forEach((lane) => {
-            const cfg = LANES[lane];
-            if (cfg) desired = deeper(desired, cfg.action);
-          });
-          const lt = lastTapRef.current;
-          if (lt && t - lt.time < 0.35) desired = deeper(desired, lt.action);
-          const targetAngle = desired
-            ? desired === "dogeza"
-              ? 92
-              : ANGLE_MAP[desired]
-            : 0;
-          const stiffness = 0.22;
-          const damping = 0.68;
-          poseVelRef.current += (targetAngle - poseAngleRef.current) * stiffness;
-          poseVelRef.current *= damping;
-          poseAngleRef.current += poseVelRef.current + (targetAngle - poseAngleRef.current) * 0.12;
-          dogezaRef.current = desired === "dogeza";
-
-          if (t >= chart.duration) finish();
-        }
-      }
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  /**
+   * 루프가 질문 이벤트를 반영할 때 쓰는 **안정적 콜백**.
+   * 상태 세터 그 자체를 ref 에 넘기지 않아 루프 컨텍스트가
+   * 렌더 트리 업데이트와 분리된다 (루프는 프레임마다 setState 를 유발하지 않는다).
+   */
+  const applyQuestionFromLoop = useCallback((q: QuestionEvent) => {
+    setQuestion(q);
   }, []);
+
+  /**
+   * B-14: RAF 루프가 `deps: []` 로 **1회만** 설치되므로, 루프가 닫는
+   * `timingWindows` 는 게임 시작 시점 값으로 고정이 된다.
+   * 결과적으로 DDA 가 탭 판정(`handlePress`)에는 반영되어도
+   * MISS 판정(`missWindowSec`)과 강제 해제(`sweepForcedReleases`)에는 반영되지 않았다.
+   *
+   * 해법: 렌더마다 컨텍스트를 ref 에 담고 루프 본문은 오직 ref 만 읽는다.
+   * deps 는 `[]` 로 유지되지만 값은 항상 최신이며 stale closure 도 없다.
+   */
+  useEffect(() => {
+    loopCtxRef.current = {
+      timingWindows,
+      notes: chart.notes,
+      questions: chart.questions,
+      duration: chart.duration,
+      noteMap,
+      lang,
+      applyJudgment,
+      pressCtx,
+      sweepForcedReleases,
+      finish,
+      isHitstopped,
+      decayZoom,
+      getPressedLanes,
+      setQuestion: applyQuestionFromLoop,
+    };
+  });
+
+  // Q-05: 프레임 드리빙은 useGameLoop 이 소유한다 (B-14: 값과 콜백을 ref 로만 읽는다)
+  useGameLoop(
+    {
+      phaseRef,
+      pausedRef,
+      noteStateRef,
+      holdLaneRef,
+      lastTapRef,
+      poseAngleRef,
+      poseVelRef,
+      dogezaRef,
+      qIndexRef,
+      missCursorRef,
+      kimRef,
+    },
+    { songTime, setNow, setDogezaPose, isSlowmo: () => fx.slowmo !== null, ctxRef: loopCtxRef }
+  );
 
   // ── derived
   const laneW = laneSize.w / 4;
-  const speed = laneSize.h / LEAD_TIME;
   const hitLineY = laneSize.h - 4;
   const tier = comboToTier(combo);
   const beatDur = 60 / chart.bpm;
   const beatPhase = now > 0 ? (now % beatDur) / beatDur : 0;
-  const hitPulse = 0.35 + (1 - beatPhase) * 0.5;
   const firstNoteTime = chart.notes[0]?.time ?? Infinity;
   const remaining = firstNoteTime - now;
   let countCode: string | null = null;
@@ -743,12 +818,16 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
 
   const visibleNotes = useMemo(() => {
     if (laneSize.w <= 0) return [];
+    // P-01: 정렬 불변식을 이용해 윈도우만 훑는다 (이전엔 매 프레임 전체 순회).
     // miss 판정된 노트는 Map에서 "miss"로 표시되지만 흘러가게 유지.
-    // 매 프레임 filter 순회를 위해 노트는 time 순 정렬 가정.
-    return chart.notes.filter((n) =>
-      isNoteVisible(n.time, now, noteStateRef.current.get(n.id))
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const { start, end } = visibleNoteWindow(chart.notes, now);
+    const out: Note[] = [];
+    for (let i = start; i < end; i++) {
+      const n = chart.notes[i];
+      if (isNoteVisible(n.time, now, noteStateRef.current.get(n.id))) out.push(n);
+    }
+    return out;
+     
   }, [chart.notes, laneSize.w, now]);
 
   // 색맹 친화 팔레트 (파랑/주황/보라/분홍 고대비)
@@ -763,7 +842,21 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
         : LANES,
     [colorblind]
   );
+
+  /**
+   * U-03: 기믹 예고 큐.
+   * `invisible` 노트는 1초에 걸쳐 사라지므로 "이거 없다" 는 메타를 외워야만
+   * 대응 가능하다. 스폰 직전 레인 상단에 경고를 띄워 미리 읽을 수 있게 한다.
+   * 계산 규칙은 순수함수 `telegraphsFor` (game/noteLayout.ts) 가 담당한다.
+   */
+  const telegraphedLanes = useMemo<TelegraphItem[]>(() => {
+    if (laneSize.w <= 0) return [];
+    const { start, end } = visibleNoteWindow(chart.notes, now);
+    return telegraphsFor(chart.notes.slice(start, end), now, SPAWN_AHEAD);
+  }, [chart.notes, laneSize.w, now]);
   const shakeClass = reduceMotion ? "" : "animate-camera-shake-hard";
+  // I-02: 스테이지 테마 (useMemo 불필요 — 순수 객체 조회)
+  const theme = themeForStage(stageId);
   // 콤보 글로우: 10/30/50 구간별 가장자리 빛
   const comboGlow = combo >= 50 ? 0.5 : combo >= 30 ? 0.35 : combo >= 10 ? 0.2 : 0;
   const zoomScale = 1 + Math.min(1.5, zoomPunch) * 0.035;
@@ -792,10 +885,15 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
           </span>
         </div>
       )}
-      {/* backdrop */}
-      <div className={`absolute inset-0 ${dogezaRef.current ? shakeClass : ""}`}>
-        <img src="/bg.jpg" className="h-full w-full object-cover opacity-70" alt="Background" />
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(12,20,36,0.4)_0%,rgba(7,10,18,0.7)_55%,rgba(10,15,28,0.85)_100%)]" />
+      {/* I-02: 스테이지별 테마 배경 (기존엔 전 스테이지 동일한 단일 이미지) */}
+      <div className={`absolute inset-0 ${dogezaPose ? shakeClass : ""}`}>
+        <img src="/bg.jpg" className="h-full w-full object-cover opacity-70" alt="" aria-hidden="true" />
+        <div
+          className="absolute inset-0"
+          style={{
+            background: `linear-gradient(180deg, ${theme.sky} 0%, ${theme.floor} 55%, ${theme.floor} 100%)`,
+          }}
+        />
       </div>
       {anger >= 80 && (
         <div className="pointer-events-none absolute inset-0 z-50">
@@ -803,451 +901,118 @@ export default function GameScreen({ stageId, equippedSkill, chartOverride, onFi
           {equippedSkill !== "media_control" && !reduceMotion && <div className="flash-storm absolute inset-0 mix-blend-screen" />}
         </div>
       )}
+      {/* I-02: 스테이지 액센트 조명 */}
       <div
-        className="absolute inset-x-0 top-0 h-40 opacity-40"
+        className="absolute inset-x-0 top-0 h-40 opacity-60"
         style={{
-          background:
-            "radial-gradient(60% 100% at 50% 0%, rgba(56,120,255,0.25), transparent 70%)",
+          background: `radial-gradient(60% 100% at 50% 0%, ${theme.accent}, transparent 70%)`,
         }}
       />
+      {/* I-05: 콤보 티어별 비네트 (저콤보는 무채색, 고콤보는 채도 상승) */}
+      {comboGlow > 0 && (
+        <div
+          className="pointer-events-none absolute inset-0 z-[1]"
+          style={{
+            background: `radial-gradient(70% 60% at 50% 70%, ${theme.accent}, transparent 75%)`,
+            opacity: Math.min(0.8, comboGlow * 1.6),
+            transition: "opacity 0.25s",
+          }}
+        />
+      )}
 
       {/* podium */}
-      <div className={`absolute bottom-12 left-1/2 h-[44vh] w-[min(760px,94vw)] -translate-x-1/2 rounded-t-[28px] border border-t border-white/10 bg-[linear-gradient(180deg,rgba(30,41,59,0.45),rgba(15,23,42,0.15))] ${dogezaRef.current ? shakeClass : ""}`} />
+      <div className={`absolute bottom-12 left-1/2 h-[44vh] w-[min(760px,94vw)] -translate-x-1/2 rounded-t-[28px] border border-t border-white/10 bg-[linear-gradient(180deg,rgba(30,41,59,0.45),rgba(15,23,42,0.15))] ${dogezaPose ? shakeClass : ""}`} />
       {/* character spotlight */}
       <div className="absolute bottom-10 left-1/2 z-[6] h-[320px] w-[420px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.16),transparent_70%)]" />
 
-      {/* quit */}
-      <button
-        onClick={quit}
-        className="absolute left-4 top-3 z-40 rounded-lg border border-white/10 bg-slate-900/70 px-2.5 py-1 text-xs text-slate-400 backdrop-blur transition hover:text-white"
-      >
-        {tr(lang, "game.quit")}
-      </button>
+      <TopHud
+        phase={phase}
+        lang={lang}
+        score={score}
+        combo={combo}
+        tier={tier}
+        helperOn={dda.windowBoost > 1.05}
+        onPause={togglePause}
+        onQuit={quit}
+      />
 
-      {/* SNS feed — 모바일에서는 공간 확보를 위해 숨김 */}
-      <div className="absolute left-4 top-12 z-30 hidden md:block">
-        <SnsFeed items={sns} />
-      </div>
+      <SidePanels
+        sns={sns}
+        stock={stock}
+        stockDelta={(stock - startStock) / startStock}
+        stockHistory={stockHistory}
+        anger={anger}
+      />
 
-      {/* stock + anger — 모바일에서 컴팩트 */}
-      <div className="absolute right-2 top-2 z-30 flex scale-90 flex-col items-end gap-2 origin-top-right sm:right-4 sm:top-3 sm:scale-100">
-        <StockPanel
-          stock={stock}
-          delta={(stock - startStock) / startStock}
-          history={stockHistory}
-        />
-        <AngerMeter anger={anger} />
-      </div>
-
-      {/* score / combo */}
-      <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 text-center">
-        <div className="font-display text-3xl text-white drop-shadow">
-          {score.toLocaleString("en-US")}
-        </div>
-        {dda.windowBoost > 1.05 && (
-          <div className="mx-auto mt-0.5 w-fit rounded-full border border-sky-300/30 bg-sky-400/10 px-2 py-0.5 text-[10px] font-bold text-sky-200">
-            {tr(lang, "game.helper")}
-          </div>
-        )}
-        {combo >= 2 && (
-          <div className="flex items-center justify-center gap-2">
-            <span className="font-display text-xl text-amber-300">
-              {combo} COMBO
-            </span>
-            {tier && (
-              <span className="rounded bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-200/90">
-                {tier.name}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* journalist / question */}
-      <div className="absolute left-1/2 top-[13vh] z-20 w-full max-w-2xl -translate-x-1/2 px-4">
+      <ReporterSlot>
         {question && <Journalist type={question.journalist} text={question.text} />}
-      </div>
+      </ReporterSlot>
 
       {/* character */}
-      <div className={`absolute bottom-10 left-1/2 z-10 h-[340px] w-[450px] -translate-x-1/2 ${dogezaRef.current ? shakeClass : ""}`}>
+      <div className={`absolute bottom-10 left-1/2 z-10 h-[340px] w-[450px] -translate-x-1/2 ${dogezaPose ? shakeClass : ""}`}>
         <PlayerCharacter
-          angle={poseAngleRef.current}
-          dogeza={dogezaRef.current}
+          kimRef={kimRef}
+          dogeza={dogezaPose}
           anger={anger}
         />
       </div>
 
-      {/* reaction line */}
-      <div className="pointer-events-none absolute left-1/2 top-[34vh] z-40 -translate-x-1/2">
-        {reaction && (
-          <div key={reaction.id} className="animate-reaction text-center">
-            <span
-              className={`font-display text-3xl sm:text-4xl ${
-                reaction.tone === "bad" ? "text-rose-400" : "text-emerald-300"
-              }`}
-              style={{ textShadow: "0 2px 24px rgba(0,0,0,0.8)" }}
-            >
-              {reaction.text}
-            </span>
-          </div>
-        )}
-      </div>
+      <ReactionLine reaction={reaction} />
 
-      {/* lane area */}
+      {/* lane area — Q-02: 프레젠테이션은 NoteField 로 분리 */}
       <div
         ref={laneRef}
         className="absolute inset-x-0 bottom-14 z-20 h-[42vh] overflow-hidden sm:h-[46vh]"
       >
-        {lanes.map((l) => {
-          const isPressed = pressedLanes.includes(l.lane);
-          return (
-            <div
-              key={l.lane}
-              className="absolute top-0 h-full transition-opacity duration-75 pointer-events-none"
-              style={{
-                left: `${l.lane * 25}%`,
-                width: "25%",
-                borderLeft:
-                  l.lane > 0 ? "1px solid rgba(255,255,255,0.06)" : undefined,
-                background: isPressed
-                  ? `linear-gradient(180deg, transparent 20%, ${l.glow} 100%)`
-                  : "linear-gradient(180deg, rgba(255,255,255,0.02), transparent 80%)",
-                opacity: isPressed ? 0.35 : 1,
-              }}
-            />
-          );
-        })}
-
-        {visibleNotes.map((n) => {
-          const lane = lanes[n.lane];
-          const st = noteStateRef.current.get(n.id);
-          let y: number;
-          let tailTop = 0;
-          let tailH = 0;
-          
-          let opacity = 1;
-
-          if (n.gimmick === "invisible") {
-            const d = n.time - now;
-            // 1.0초부터 서서히 투명해지되, 잔상을 35% + 점선 테두리로 남겨
-            // 기믹임을 명확히 (완전 소멸로 오해 방지)
-            if (d < 1.0) opacity = Math.max(0.35, (d - 0.2) / 0.8);
-          }
-          if (n.gimmick === "speedUp") {
-            // 역주행 버그 방지: 단순 배속 곱셈 대신 타격선까지 남은 시간을 왜곡 곡선(제곱 등)으로 가속시킴
-            const d = Math.max(0, n.time - now);
-            if (d < 1.0) {
-              const ratio = Math.pow(d, 1.6); // 1.0 -> 1, 0 -> 0 이지만 곡선으로 급가속
-              y = hitLineY - ratio * speed;
-            } else {
-              y = hitLineY - d * speed;
-            }
-            if (n.hold > 0) {
-              tailTop = y + 18;
-              tailH = n.hold * speed;
-            }
-          } else {
-            if (st === "holding") {
-              y = hitLineY;
-              const remaining = n.time + n.hold - now;
-              tailTop = hitLineY + 2;
-              tailH = Math.max(0, remaining) * speed;
-            } else {
-              const diff = n.time - now;
-              y = hitLineY - diff * speed;
-              if (n.hold > 0) {
-                tailTop = y + 18;
-                tailH = n.hold * speed;
-              }
-            }
-          }
-
-          const isFake = n.gimmick === "fake";
-          const isGhost = n.gimmick === "invisible";
-          const bgColor = st === "miss" ? "#334155" : (isFake ? "#6b7280" : lane.color);
-          const textColor = st === "miss" ? "#1e293b" : (isFake ? "#111827" : "#0b0f19");
-          const label = isFake 
-            ? "???" 
-            : isGhost 
-              ? tr(lang, "game.ghost") 
-              : n.gimmick === "speedUp"
-                ? tr(lang, "game.speedup")
-                : lane.label;
-          const boxShadow = st === "miss" || isFake ? "none" : `0 0 18px ${lane.glow}`;
-          if (st === "miss") opacity *= 0.4; // 미스난 노트는 반투명하게 바닥으로 떨어짐
-
-          return (
-            <div
-              key={n.id}
-              className="absolute top-0"
-              style={{ left: n.lane * laneW, width: laneW, opacity }}
-            >
-              {n.hold > 0 && !isFake && (
-                <div
-                  className="absolute rounded-full"
-                  style={{
-                    left: laneW * 0.18,
-                    width: laneW * 0.64,
-                    top: tailTop,
-                    height: Math.max(4, tailH),
-                    background: lane.glow,
-                  }}
-                />
-              )}
-              <div
-                className="absolute flex items-center justify-center rounded-xl font-display"
-                style={{
-                  left: laneW * 0.1,
-                  width: laneW * 0.8,
-                  height: 36,
-                  top: y - 18,
-                  backgroundColor: bgColor,
-                  color: textColor,
-                  fontSize: label.length > 4 ? 15 : 20,
-                  boxShadow,
-                  // 고스트 노트는 점선 테두리로 기믹임을 명시
-                  border: isGhost ? "2px dashed rgba(255,255,255,0.7)" : undefined,
-                }}
-              >
-                {label}
-              </div>
-            </div>
-          );
-        })}
-
-        {/* hit line */}
-        <div
-          className="absolute inset-x-0"
-          style={{
-            top: hitLineY,
-            height: 2,
-            background: `rgba(255,255,255,${hitPulse})`,
-            boxShadow: `0 0 16px rgba(255,255,255,${(hitPulse * 0.9).toFixed(2)})`,
-          }}
+        <NoteField
+          lanes={lanes}
+          notes={visibleNotes}
+          stateOf={noteStateOf}
+          now={now}
+          laneW={laneW}
+          laneH={laneSize.h}
+          hitLineY={hitLineY}
+          beatPhase={beatPhase}
+          pressedLanes={pressedLanes}
+          telegraphs={telegraphedLanes}
+          popups={popups}
+          sparks={sparks}
+          shockwaves={shockwaves}
+          solidRings={solidRings}
+          lang={lang}
         />
-
-        {/* judgment popups */}
-        {popups.map((p) => (
-          <div
-            key={p.id}
-            className="animate-popup absolute font-display text-2xl font-bold"
-            style={{
-              left: p.lane * laneW + laneW / 2,
-              top: hitLineY - 44,
-              color: JUDGMENTS[p.judgment].color,
-              textShadow: "0 2px 12px rgba(0,0,0,0.7)",
-            }}
-          >
-            {JUDGMENTS[p.judgment].label}
-          </div>
-        ))}
-
-        {/* sparks */}
-        {sparks.map((s) => (
-          <div
-            key={s.id}
-            className="hit-spark"
-            style={{
-              left: s.lane * laneW + laneW / 2,
-              top: hitLineY,
-              width: 14,
-              height: 14,
-              backgroundColor: s.color,
-              boxShadow: `0 0 12px ${s.color}`,
-              ["--tx" as any]: s.tx,
-              ["--ty" as any]: s.ty,
-            }}
-          />
-        ))}
-
-        {/* shockwaves — PERFECT 파동 링 */}
-        {shockwaves.map((w) => (
-          <div
-            key={w.id}
-            className="pointer-events-none absolute rounded-full border-2"
-            style={{
-              left: w.lane * laneW + laneW / 2,
-              top: hitLineY,
-              width: 24,
-              height: 24,
-              transform: "translate(-50%,-50%)",
-              borderColor: lanes[w.lane]?.color ?? "#fff",
-              animation: "shockwave 0.45s ease-out forwards",
-            }}
-          />
-        ))}
       </div>
 
-      {/* key buttons — 터치 대응: 최소 56px 터치 타겟, pointer 이벤트 */}
-      <div className="absolute inset-x-0 bottom-0 z-30 flex h-16 touch-none select-none">
-        {lanes.map((l) => {
-          const isPressed = pressedLanes.includes(l.lane);
-          const customLabel = (() => {
-            for (const [k, v] of Object.entries(keyMap)) {
-              if (v === l.lane) return k === " " ? "SPACE" : k.toUpperCase();
-            }
-            return l.keyLabel;
-          })();
-          return (
-            <button
-              key={l.lane}
-              type="button"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-                onLanePress(l.lane);
-              }}
-              onPointerUp={(e) => {
-                e.preventDefault();
-                onLaneRelease(l.lane);
-              }}
-              onPointerCancel={() => {
-                onLaneRelease(l.lane);
-              }}
-              onContextMenu={(e) => e.preventDefault()}
-              className={`flex flex-1 flex-col items-center justify-center gap-0.5 border-t border-white/10 cursor-pointer select-none transition-all duration-75 active:scale-95 ${
-                isPressed
-                  ? "bg-white/20"
-                  : "bg-slate-950/80 hover:bg-white/5 active:bg-white/10"
-              }`}
-              style={{
-                borderRight:
-                  l.lane < 3 ? "1px solid rgba(255,255,255,0.06)" : undefined,
-                boxShadow: isPressed ? `inset 0 0 20px ${l.glow}` : undefined,
-                minHeight: 56,
-              }}
-            >
-              <span className="flex items-center gap-1.5 pointer-events-none">
-                <kbd
-                  className={`rounded border px-1.5 py-0.5 font-display text-sm transition ${
-                    isPressed
-                      ? "bg-white border-white font-bold text-slate-950"
-                      : "border-white/20 bg-slate-800"
-                  }`}
-                  style={{ color: isPressed ? "#0f172a" : l.color }}
-                >
-                  {customLabel}
-                </kbd>
-                <span className="font-display text-lg" style={{ color: l.color }}>
-                  {l.label}
-                </span>
-              </span>
-              <span className="hidden text-[10px] text-slate-400 pointer-events-none sm:inline">{LANE_NAMES[lang][l.action]}</span>
-            </button>
-          );
-        })}
-      </div>
+      <LaneKeys
+        lanes={lanes}
+        keyMap={keyMap}
+        lang={lang}
+        pressedLanes={pressedLanes}
+        onPress={onLanePress}
+        onRelease={onLaneRelease}
+      />
 
-      {/* camera flashes */}
-      <div className="pointer-events-none absolute inset-0 z-40">
-        {flashes.map((f) => (
-          <div
-            key={f.id}
-            className="animate-flash absolute rounded-full bg-white"
-            style={{
-              left: `${f.x}%`,
-              top: `${f.y}%`,
-              width: 90,
-              height: 90,
-              transform: "translate(-50%,-50%)",
-              filter: "blur(2px)",
-            }}
-          />
-        ))}
-      </div>
+      <CameraFlashes flashes={flashes} />
 
-      {/* countdown — 비트 도트 + 진행감 */}
-      {countCode && countLabel && (
-        <div className="pointer-events-none absolute inset-0 z-50 flex flex-col items-center justify-center gap-3">
-          <span
-            key={countCode}
-            className="animate-count font-display text-7xl text-white sm:text-8xl"
-            style={{ textShadow: "0 0 30px rgba(251,191,36,0.7)" }}
-          >
-            {countLabel}
-          </span>
-          <div className="flex gap-2">
-            {[3, 2, 1].map((b) => (
-              <span
-                key={b}
-                className="h-2 w-2 rounded-full"
-                style={{
-                  backgroundColor:
-                    countCode === String(b) || (countCode === "GO!" && b === 1)
-                      ? "#fbbf24"
-                      : "rgba(255,255,255,0.2)",
-                  boxShadow: countCode === String(b) ? "0 0 12px #fbbf24" : "none",
-                }}
-              />
-            ))}
-          </div>
-          <span className="font-display text-sm tracking-[0.3em] text-slate-400">
-            {chart.title}
-          </span>
-        </div>
-      )}
+      <CountdownOverlay code={countCode} label={countLabel} title={chart.title} />
 
-      {/* ready overlay */}
+      <LiveJudgment text={liveJudgment} />
+
       {phase === "ready" && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-6 bg-black/70 px-6 backdrop-blur-sm">
-          <p className="font-display text-4xl text-white">
-            {tr(lang, "game.readyA")} <span className="text-rose-400">{tr(lang, "game.readyB")}</span>
-          </p>
-          <p className="-mt-3 font-display text-sm tracking-[0.3em] text-slate-500">
-            {chart.title} · {chart.subtitle}
-          </p>
-          <p className="max-w-md text-center text-sm leading-relaxed text-slate-300">
-            {tr(lang, "game.readyDesc")}
-          </p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {lanes.map((l) => {
-              const effectiveLabel = (() => {
-                for (const [k, v] of Object.entries(keyMap)) {
-                  if (v === l.lane) return k === " " ? "SPACE" : k.toUpperCase();
-                }
-                return l.keyLabel;
-              })();
-              return (
-                <div
-                  key={l.lane}
-                  className="flex flex-col items-center gap-1 rounded-xl border border-white/10 bg-slate-900/70 px-4 py-3"
-                >
-                  <kbd
-                    className="rounded-md border px-2 py-1 font-display text-base"
-                    style={{
-                      color: l.color,
-                      borderColor: `${l.color}55`,
-                      backgroundColor: `${l.color}14`,
-                    }}
-                  >
-                    {effectiveLabel}
-                  </kbd>
-                  <span className="font-display text-xl" style={{ color: l.color }}>
-                    {l.label}
-                  </span>
-                  <span className="text-[10px] text-slate-400">{LANE_NAMES[lang][l.action]}</span>
-                </div>
-              );
-            })}
-          </div>
-          <p className="-mt-2 text-[11px] text-slate-500">
-            {tr(lang, "game.imeNote")}
-          </p>
-          <button
-            onClick={startGame}
-            className="animate-ring rounded-full border border-amber-300/40 bg-amber-400/10 px-8 py-3 font-display text-xl text-amber-200 transition hover:bg-amber-400/20"
-          >
-            {tr(lang, "game.start")}
-          </button>
-        </div>
+        <ReadyOverlay
+          lanes={lanes}
+          keyMap={keyMap}
+          lang={lang}
+          title={chart.title}
+          subtitle={chart.subtitle}
+          onStart={startGame}
+        />
       )}
 
-      {/* done overlay */}
-      {phase === "done" && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/70">
-          <p className="font-display text-5xl text-white">{tr(lang, "game.done")}</p>
-          <p className="mt-2 text-slate-400">{tr(lang, "game.tally")}</p>
-        </div>
+      {phase === "done" && <DoneOverlay lang={lang} />}
+
+      {paused && (
+        <PauseOverlay lang={lang} onResume={togglePause} onQuit={quit} />
       )}
     </div>
   );

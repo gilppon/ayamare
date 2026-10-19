@@ -5,6 +5,7 @@ import type {
   SnsItem,
 } from "./types";
 import type { Lang } from "@/i18n/ui";
+import { tr } from "@/i18n/ui";
 
 export const BPM = 130;
 
@@ -35,17 +36,36 @@ export const GREAT_MS = 110;
 export const GOOD_MS = 170;
 export const BAD_MS = 260;
 
+/** I-09: 분노 게이지의 디스크리트 단계 수. 이모지 반복 대신 고정된 pip 개수를 쓴다
+ * (OS/이모지 폰트에 따라 렌더가 달라지고 색맹에선 구분도 안 된다). */
+export const ANGER_STEPS = 5;
+
+/** I-09: 분노 단계(0~1) → 채워진 pip 인덱스 수. 순수함수 */
+export function angerPips(anger: number): number {
+  const clamped = Math.max(0, Math.min(100, anger));
+  return Math.round((clamped / 100) * ANGER_STEPS);
+}
+
+/** I-09: 분노 구간별 색 (기존 임계값 유지) */
+export function angerColor(anger: number): string {
+  const c = Math.max(0, Math.min(100, anger));
+  if (c >= 80) return "#f43f5e";
+  if (c >= 55) return "#fb923c";
+  if (c >= 30) return "#facc15";
+  return "#34d399";
+}
+
 export interface LaneConfig {
   lane: 0 | 1 | 2 | 3;
   action: ApologyAction;
   key: string;
   keyLabel: string;
   label: string;
-  name: string;
   color: string;
   glow: string;
 }
 
+/** 레인 이름은 i18n 이므로 LANE_NAMES 를 사용한다. */
 export const LANES: LaneConfig[] = [
   {
     lane: 0,
@@ -53,7 +73,6 @@ export const LANES: LaneConfig[] = [
     key: "a",
     keyLabel: "A",
     label: "15°",
-    name: "가벼운 목례",
     color: "#2dd4bf",
     glow: "rgba(45, 212, 191, 0.55)",
   },
@@ -63,7 +82,6 @@ export const LANES: LaneConfig[] = [
     key: "s",
     keyLabel: "S",
     label: "45°",
-    name: "정중한 사과",
     color: "#38bdf8",
     glow: "rgba(56, 189, 248, 0.55)",
   },
@@ -73,7 +91,6 @@ export const LANES: LaneConfig[] = [
     key: "d",
     keyLabel: "D",
     label: "90°",
-    name: "극한 사죄",
     color: "#c084fc",
     glow: "rgba(192, 132, 252, 0.55)",
   },
@@ -83,7 +100,6 @@ export const LANES: LaneConfig[] = [
     key: " ",
     keyLabel: "SPACE",
     label: "DOGEZA",
-    name: "최종 사죄",
     color: "#fb7185",
     glow: "rgba(251, 113, 133, 0.6)",
   },
@@ -95,6 +111,96 @@ export const ACTION_BY_LANE: ApologyAction[] = [
   "bow90",
   "dogeza",
 ];
+
+/** I-04: 배경색 위에서 읽히는 텍스트 색을 상대 휘도로 선택.
+ * 기존엔 모든 노트 라벨에 `#0b0f19` 를 하드코딩해 분홍/보라에서 대비가 가장 낮았다.
+ *
+ * 실제 임계값은 WCAG 교차점 `(L+0.05)^2 > 1.05*0.05` → **L > 0.179** 다.
+ * 0.42 로 두면 중간 휘도 배경(보라·연보라)에 흰 글자를 씌우게 되어
+ * 오히려 대비가 크게 떨어진다 (흰 글자 대비 ≈ 2.6 vs 검정 ≈ 8.0). */
+const TEXT_LUMINANCE_CROSSOVER = 0.179;
+
+export function readableOn(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return "#0b0f19";
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  // sRGB 상대 휘도 (WCAG)
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return L > TEXT_LUMINANCE_CROSSOVER ? "#0b0f19" : "#f8fafc";
+}
+
+/** WCAG 상대 대비비 (1~21). 테스트용. */
+export function contrastRatio(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+    if (!m) return 0;
+    const n = parseInt(m[1], 16);
+    const lin = (c: number) => {
+      const s = c / 255;
+      return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    return (
+      0.2126 * lin((n >> 16) & 255) +
+      0.7152 * lin((n >> 8) & 255) +
+      0.0722 * lin(n & 255)
+    );
+  };
+  const l1 = lum(a);
+  const l2 = lum(b);
+  const hi = Math.max(l1, l2);
+  const lo = Math.min(l1, l2);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** I-02: 스테이지별 테마 (배경 그라디언트 · 비네트 · 앵거 오버레이 색) */
+export interface StageTheme {
+  /** 배경 상단 그라디언트 시작색 (rgba) */
+  sky: string;
+  /** 배경 하단 그라디언트 색 (rgba) */
+  floor: string;
+  /** 조명/비네트 강조색 */
+  accent: string;
+}
+
+export const STAGE_THEMES: Record<string, StageTheme> = {
+  stage1: { sky: "rgba(30,58,138,0.55)", floor: "rgba(7,10,18,0.88)", accent: "rgba(56,189,248,0.30)" },
+  stage2: { sky: "rgba(76,29,149,0.55)", floor: "rgba(10,7,20,0.88)", accent: "rgba(167,139,250,0.32)" },
+  stage3: { sky: "rgba(14,64,84,0.55)", floor: "rgba(4,12,18,0.9)", accent: "rgba(45,212,191,0.30)" },
+  stage4: { sky: "rgba(120,53,15,0.55)", floor: "rgba(18,10,6,0.9)", accent: "rgba(251,146,60,0.30)" },
+  stage5: { sky: "rgba(127,29,29,0.58)", floor: "rgba(20,6,8,0.92)", accent: "rgba(248,113,113,0.34)" },
+  daily: { sky: "rgba(120,53,15,0.5)", floor: "rgba(16,10,6,0.88)", accent: "rgba(251,191,36,0.30)" },
+  default: { sky: "rgba(30,58,138,0.5)", floor: "rgba(7,10,18,0.88)", accent: "rgba(56,189,248,0.28)" },
+};
+
+/** I-02: stageId → 테마. 커스텀/알 수 없는 스테이지는 기본 테마. */
+export function themeForStage(stageId: string): StageTheme {
+  const key = stageId.startsWith("daily")
+    ? "daily"
+    : stageId.startsWith("custom")
+    ? "default"
+    : stageId;
+  return STAGE_THEMES[key] ?? STAGE_THEMES.default;
+}
+
+/**
+ * 내부 스테이지 ID → 표시 이름.
+ *
+ * `custom:1758261234567`, `daily:2026-10-19` 같은 값이 그대로 화면에 새면
+ * 사용자에게 내부 구현이 노출된다. 결과 화면에만 있던 이 처리를
+ * 기록 탭까지 공유한다.
+ */
+export function stageLabelFor(stageId: string, lang: Lang): string {
+  if (stageId.startsWith("custom")) return tr(lang, "stage.custom");
+  if (stageId.startsWith("daily")) return tr(lang, "stage.daily");
+  return stageId.toUpperCase();
+}
 
 export const KEY_TO_LANE: Record<string, number> = {
   a: 0,
@@ -121,6 +227,22 @@ export function laneFromKeyboardEvent(
 ): number | undefined {
   const key = e.key === " " ? " " : e.key.toLowerCase();
   return keyMap[key] ?? KEY_TO_LANE[key] ?? CODE_TO_LANE[e.code];
+}
+
+/**
+ * 게임 중 누를 수 없는 키를 걸러낸다 (설정 화면의 키 리바인딩용).
+ *
+ * Shift/Control/Alt/Meta 같은 **수정자**는 눌려도 레인 판정을 만들지 못하므로
+ * 배정해도 그 레인이 죽는다. Tab/Escape 는 UI 조작에 예약돼 있고,
+ * IME 조합 중이거나 죽은 키(Dead)는 소문자로 접히지 않는다.
+ */
+export function isBindableKey(key: string): boolean {
+  if (key === "Tab" || key === "Escape") return false;
+  if (key === "Shift" || key === "Control" || key === "Alt" || key === "Meta") return false;
+  if (key === "CapsLock" || key === "NumLock" || key === "ScrollLock") return false;
+  if (key === "ContextMenu" || key === "Insert" || key === "Pause") return false;
+  if (key.length > 1 && key.toLowerCase() === key) return false;
+  return true;
 }
 
 export interface ComboTier {
@@ -273,16 +395,17 @@ export const LANE_NAMES: Record<Lang, Record<ApologyAction, string>> = {
   ja: { bow15: "軽い会釈", bow45: "丁寧な謝罪", bow90: "土下座級の謝罪", dogeza: "最終謝罪" },
 };
 
+/** 기자별 연출 정보. 이름은 i18n 이므로 JOURNALIST_NAMES 를 사용한다. */
 export const JOURNALISTS: Record<
   JournalistType,
-  { name: string; stars: string; color: string }
+  { stars: string; color: string }
 > = {
-  rookie: { name: "신입 기자", stars: "★", color: "#7dd3fc" },
-  economy: { name: "경제지 기자", stars: "★★", color: "#fbbf24" },
-  investigative: { name: "탐사보도 기자", stars: "★★★", color: "#f472b6" },
-  internet: { name: "인터넷 기자", stars: "★★★", color: "#34d399" },
-  veteran: { name: "베테랑 기자", stars: "★★★★", color: "#fb923c" },
-  boss: { name: "최종보스 기자", stars: "★★★★★", color: "#f43f5e" },
+  rookie: { stars: "★", color: "#7dd3fc" },
+  economy: { stars: "★★", color: "#fbbf24" },
+  investigative: { stars: "★★★", color: "#f472b6" },
+  internet: { stars: "★★★", color: "#34d399" },
+  veteran: { stars: "★★★★", color: "#fb923c" },
+  boss: { stars: "★★★★★", color: "#f43f5e" },
 };
 
 const SNS_USERS = [

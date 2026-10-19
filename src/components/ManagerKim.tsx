@@ -1,12 +1,20 @@
-import {memo} from 'react';
+import { memo, useImperativeHandle, useRef } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { tr } from '@/i18n/ui';
 
 /**
  * Vintage Editorial Cartoon Style Manager Kim (빈티지 신문 풍자 만평 스타일 김부장)
  * 1번 시안의 땀 뻘뻘 흘리는 처절한 중년 부장 캐릭터를 디테일한 잉크 펜화 & 해칭으로 완벽 재현
- * NOTE: 매 프레임 angle이 바뀌므로 정적 아트워크는 memo로 분리해
- * 프레임당 리컨실리이를 transform 속성 2개로 제한한다.
+ * NOTE: P-01 — 게임 화면은 매 프레임 angle 이 바뀌므로 정적 아트워크가 React 리렌더를
+ * 받으면 100여 개 path 를 매 프레임 diff 하게 된다.
+ * `setPose` 핸들로 SVG <g> 의 transform 을 **DOM 직접 쓰기**로 갱신하고,
+ * 아트워크(EditorialHead/Torso/Legs)는 memo 로 한 번만 렌더되게 한다.
  */
+
+export interface ManagerKimHandle {
+  /** 매 프레임 호출 — React 렌더 없이 회전만 갱신 */
+  setPose: (angle: number, dogeza: boolean) => void;
+}
 
 const EditorialHead = memo(function EditorialHead() {
   return (
@@ -265,27 +273,35 @@ const EditorialLegs = memo(function EditorialLegs({dogeza = false}: {dogeza?: bo
   );
 });
 
+export interface ManagerKimProps {
+  angle?: number;
+  dogeza?: boolean;
+  debug?: boolean;
+  target?: number;
+  ghost?: boolean;
+}
+
 export default memo(function ManagerKim({
   angle = 0,
   dogeza = false,
   debug = false,
   target = 45,
   ghost = false,
-}: {
-  angle?: number;
-  dogeza?: boolean;
-  debug?: boolean;
-  target?: number;
-  ghost?: boolean;
-}) {
+  ref,
+}: ManagerKimProps & { ref?: React.Ref<ManagerKimHandle> }) {
   const pose = dogeza ? 108 : angle;
   const lang = useSettingsStore((s) => s.lang);
-  const ariaLabel =
-    lang === "ko"
-      ? `김부장 ${dogeza ? "도게자" : `${Math.round(angle)}도 사과`} 자세`
-      : lang === "en"
-      ? `Manager Kim, ${dogeza ? "dogeza" : `${Math.round(angle)}-degree apology`} pose`
-      : `金部長、${dogeza ? "土下座" : `${Math.round(angle)}度謝罪`}ポーズ`;
+  // P-01: 회전 노드를 직접 제어한다
+  const poseGRef = useRef<SVGGElement | null>(null);
+  useImperativeHandle(ref, () => ({
+    setPose(a, d) {
+      poseGRef.current?.setAttribute("transform", `rotate(${d ? 108 : a})`);
+    },
+  }));
+  // i18n 사전을 거치지 않던 인라인 3중 분기 → 키로 이동 (사전 불일치 검사 대상)
+  const ariaLabel = dogeza
+    ? tr(lang, "kim.poseDogeza")
+    : tr(lang, "kim.poseBow", { deg: Math.round(angle) });
 
   return (
     <svg
@@ -312,7 +328,7 @@ export default memo(function ManagerKim({
         <EditorialLegs dogeza={dogeza} />
 
         {/* 상체 (각도에 따라 정밀 회전) */}
-        <g transform={`rotate(${pose})`}>
+        <g ref={poseGRef} transform={`rotate(${pose})`}>
           <EditorialTorso />
           <EditorialHead />
         </g>

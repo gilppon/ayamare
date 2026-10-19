@@ -3,6 +3,11 @@ import { persist } from "zustand/middleware";
 import type { SkillType } from "@/game/types";
 
 interface MetaState {
+  /**
+   * U-07: 구버전 가상 화폐(¥). 신규 재화는 `points` 뿐이며 이 값은 어디에도
+   * 지출되지 않았다. 최초 마이그레이션에서 points 로 환전된 뒤 남아 있던 잔재다.
+   * 기존 세이브 호환을 위해 필드는 유지하되 더 이상 적립하지 않는다.
+   */
   capital: number;
   /** 반성포인트 (신규 재화, 스킬 구매용) */
   points: number;
@@ -10,7 +15,6 @@ interface MetaState {
   equippedSkill: SkillType;
   buy: (skillId: SkillType, cost: number) => boolean;
   equip: (skillId: SkillType) => void;
-  addCapital: (v: number) => void;
   addPoints: (v: number) => void;
 }
 
@@ -66,7 +70,6 @@ export const useMetaStore = create<MetaState>()(
           return true;
         },
         equip: (skillId) => set({ equippedSkill: skillId }),
-        addCapital: (v) => set((s) => ({ capital: s.capital + v })),
         addPoints: (v) => set((s) => ({ points: s.points + v })),
       };
     },
@@ -86,7 +89,6 @@ export const useMetaStore = create<MetaState>()(
 if (typeof window !== "undefined") {
   useMetaStore.subscribe((s) => {
     try {
-      localStorage.setItem("apolo_capital", String(s.capital));
       localStorage.setItem("apolo_points", String(s.points));
       localStorage.setItem("apolo_skills", JSON.stringify(s.ownedSkills));
       localStorage.setItem("apolo_equip", s.equippedSkill);
